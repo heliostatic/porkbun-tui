@@ -341,6 +341,9 @@ func (a *App) updateDomains(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 
 		case key.Matches(msg, keys.Keys.DNS):
+			if a.demoMode {
+				return a, nil // No DNS view in demo mode
+			}
 			if d := a.domainsView.SelectedDomain(); d != nil {
 				a.dnsView.SetDomain(d.Name)
 				a.view = ViewDNS
@@ -349,6 +352,9 @@ func (a *App) updateDomains(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 
 		case key.Matches(msg, keys.Keys.NS):
+			if a.demoMode {
+				return a, nil // No NS view in demo mode
+			}
 			if d := a.domainsView.SelectedDomain(); d != nil {
 				a.nameserversView.SetDomain(d.Name)
 				a.view = ViewNameservers
@@ -357,6 +363,9 @@ func (a *App) updateDomains(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 
 		case key.Matches(msg, keys.Keys.Avail):
+			if a.demoMode {
+				return a, nil // No availability check in demo mode
+			}
 			a.view = ViewAvailability
 			return a, a.availabilityView.Focus()
 
@@ -389,6 +398,9 @@ func (a *App) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case key.Matches(msg, keys.Keys.DNS):
+		if a.demoMode {
+			return a, nil // No DNS view in demo mode
+		}
 		if d := a.domainsView.SelectedDomain(); d != nil {
 			a.dnsView.SetDomain(d.Name)
 			a.view = ViewDNS
@@ -397,6 +409,9 @@ func (a *App) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case key.Matches(msg, keys.Keys.NS):
+		if a.demoMode {
+			return a, nil // No NS view in demo mode
+		}
 		if d := a.domainsView.SelectedDomain(); d != nil {
 			a.nameserversView.SetDomain(d.Name)
 			a.view = ViewNameservers
