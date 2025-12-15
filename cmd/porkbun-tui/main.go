@@ -8,6 +8,7 @@ import (
 	"github.com/bc/porkbun-tui/internal/api"
 	"github.com/bc/porkbun-tui/internal/cache"
 	"github.com/bc/porkbun-tui/internal/config"
+	"github.com/bc/porkbun-tui/internal/demo"
 	"github.com/bc/porkbun-tui/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -90,12 +91,9 @@ func main() {
 	var client *api.Client
 
 	if *demoMode {
-		// Demo mode: use cached data only, no API client
-		if len(cachedDomains) == 0 {
-			fmt.Fprintln(os.Stderr, "Error: no cached data for demo mode")
-			fmt.Fprintln(os.Stderr, "Run with API credentials first to populate the cache")
-			os.Exit(1)
-		}
+		// Demo mode: use built-in sample data
+		cachedDomains = demo.Domains()
+		cachedPricing = demo.Pricing()
 	} else {
 		// Normal mode: load config and create API client
 		cfg, err := config.Load()
