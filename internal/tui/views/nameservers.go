@@ -264,11 +264,12 @@ func (v *NameserversView) View() string {
 		for i, input := range v.inputs {
 			label := fmt.Sprintf("  NS%d: ", i+1)
 			b.WriteString(styles.LabelStyle.Render(label))
+			cursor := "  "
 			if i == v.cursor {
-				b.WriteString(styles.SearchStyle.Render(input.View()))
-			} else {
-				b.WriteString(input.View())
+				cursor = "> "
 			}
+			b.WriteString(cursor)
+			b.WriteString(input.View())
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
