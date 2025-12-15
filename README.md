@@ -4,6 +4,25 @@ A terminal UI for managing your [Porkbun](https://porkbun.com) domains.
 
 ![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white)
 
+![Domain List](screenshots/domain-list.png)
+
+<details>
+<summary>More screenshots</summary>
+
+### Search
+![Search](screenshots/search-results.png)
+
+### Domain Details
+![Detail View](screenshots/detail-view.png)
+
+### TLD Breakdown
+![TLD View](screenshots/tld-view.png)
+
+### Calendar View
+![Calendar View](screenshots/calendar-list-view.png)
+
+</details>
+
 ## Features
 
 - **Domain List** - View all your domains with search, filter, and sort
