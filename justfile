@@ -87,3 +87,7 @@ clean-dist:
 # Full clean
 clean-all: clean clean-dist
     rm -f coverage.out coverage.html
+
+# Generate screenshots using VHS (requires: brew install vhs)
+screenshots: build
+    vhs screenshots/demo.tape
