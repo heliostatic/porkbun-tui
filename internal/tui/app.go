@@ -54,6 +54,7 @@ type App struct {
 	// State
 	loading    bool
 	refreshing bool // True while background refresh in progress
+	demoMode   bool // True when running without API credentials
 	err        error
 	spinner    spinner.Model
 }
@@ -85,7 +86,7 @@ type errMsg struct {
 	err error
 }
 
-func NewApp(client *api.Client, appCache *cache.Cache, cachedDomains []api.Domain, cachedPricing map[string]api.TLDPricing) *App {
+func NewApp(client *api.Client, appCache *cache.Cache, cachedDomains []api.Domain, cachedPricing map[string]api.TLDPricing, demoMode bool) *App {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = styles.SpinnerStyle
@@ -121,12 +122,16 @@ func NewApp(client *api.Client, appCache *cache.Cache, cachedDomains []api.Domai
 		helpView:         views.NewHelpView(),
 		pricing:          cachedPricing,
 		spinner:          s,
-		loading:          !hasCachedDomains, // Only show loading if no cached data
-		refreshing:       true,              // Always start a background refresh
+		loading:          !hasCachedDomains && !demoMode, // Only show loading if no cached data and not demo
+		refreshing:       !demoMode,                      // Don't refresh in demo mode
+		demoMode:         demoMode,
 	}
 }
 
 func (a *App) Init() tea.Cmd {
+	if a.demoMode {
+		return nil // No API calls in demo mode
+	}
 	return tea.Batch(
 		a.spinner.Tick,
 		a.loadDomains(),
@@ -364,6 +369,9 @@ func (a *App) updateDomains(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 
 		case key.Matches(msg, keys.Keys.Refresh):
+			if a.demoMode {
+				return a, nil // No refresh in demo mode
+			}
 			a.refreshing = true
 			return a, tea.Batch(a.loadDomains(), a.loadPricing())
 		}

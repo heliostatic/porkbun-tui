@@ -22,6 +22,7 @@ func printUsage() {
 	fmt.Println("Options:")
 	fmt.Println("  -h, --help      Show this help message")
 	fmt.Println("  -v, --version   Show version")
+	fmt.Println("  --demo          Demo mode (use cached data, no API calls)")
 	fmt.Println()
 	fmt.Println("Configuration:")
 	fmt.Println("  Set your Porkbun API credentials via environment variables:")
@@ -55,6 +56,7 @@ func main() {
 	// Parse flags
 	showHelp := flag.Bool("help", false, "Show help")
 	showVersion := flag.Bool("version", false, "Show version")
+	demoMode := flag.Bool("demo", false, "Demo mode (use cached data, no API calls)")
 	flag.BoolVar(showHelp, "h", false, "Show help")
 	flag.BoolVar(showVersion, "v", false, "Show version")
 	flag.Usage = printUsage
@@ -68,19 +70,6 @@ func main() {
 	if *showVersion {
 		fmt.Printf("porkbun-tui %s\n", version)
 		os.Exit(0)
-	}
-
-	// Load config
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintln(os.Stderr, "\nSet your Porkbun API credentials:")
-		fmt.Fprintln(os.Stderr, "  export PORKBUN_API_KEY=pk1_xxx")
-		fmt.Fprintln(os.Stderr, "  export PORKBUN_SECRET_KEY=sk1_xxx")
-		fmt.Fprintln(os.Stderr, "\nOr create ~/.config/porkbun-tui/config.yaml:")
-		fmt.Fprintln(os.Stderr, "  api_key: pk1_xxx")
-		fmt.Fprintln(os.Stderr, "  secret_key: sk1_xxx")
-		os.Exit(1)
 	}
 
 	// Initialize cache
@@ -98,11 +87,33 @@ func main() {
 		cachedPricing, _, _ = appCache.LoadPricing()
 	}
 
-	// Create API client
-	client := api.NewClient(cfg)
+	var client *api.Client
+
+	if *demoMode {
+		// Demo mode: use cached data only, no API client
+		if len(cachedDomains) == 0 {
+			fmt.Fprintln(os.Stderr, "Error: no cached data for demo mode")
+			fmt.Fprintln(os.Stderr, "Run with API credentials first to populate the cache")
+			os.Exit(1)
+		}
+	} else {
+		// Normal mode: load config and create API client
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintln(os.Stderr, "\nSet your Porkbun API credentials:")
+			fmt.Fprintln(os.Stderr, "  export PORKBUN_API_KEY=pk1_xxx")
+			fmt.Fprintln(os.Stderr, "  export PORKBUN_SECRET_KEY=sk1_xxx")
+			fmt.Fprintln(os.Stderr, "\nOr create ~/.config/porkbun-tui/config.yaml:")
+			fmt.Fprintln(os.Stderr, "  api_key: pk1_xxx")
+			fmt.Fprintln(os.Stderr, "  secret_key: sk1_xxx")
+			os.Exit(1)
+		}
+		client = api.NewClient(cfg)
+	}
 
 	// Create and run app
-	app := tui.NewApp(client, appCache, cachedDomains, cachedPricing)
+	app := tui.NewApp(client, appCache, cachedDomains, cachedPricing, *demoMode)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
