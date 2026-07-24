@@ -95,6 +95,17 @@ type purchaseErrMsg struct {
 	err error
 }
 
+// dnsErrMsg and nsErrMsg are handled unconditionally too: a load/save error
+// arriving while the user is in another view (e.g. help) must still clear
+// that view's loading/saving state, or it soft-locks.
+type dnsErrMsg struct {
+	err error
+}
+
+type nsErrMsg struct {
+	err error
+}
+
 type pricingLoadedMsg struct {
 	pricing map[string]api.TLDPricing
 }
@@ -181,7 +192,7 @@ func (a *App) loadDNS(domain string) tea.Cmd {
 	return func() tea.Msg {
 		records, err := a.client.GetDNSRecords(context.Background(), domain)
 		if err != nil {
-			return errMsg{err}
+			return dnsErrMsg{err}
 		}
 		return dnsLoadedMsg{records}
 	}
@@ -191,7 +202,7 @@ func (a *App) loadNameservers(domain string) tea.Cmd {
 	return func() tea.Msg {
 		ns, err := a.client.GetNameservers(context.Background(), domain)
 		if err != nil {
-			return errMsg{err}
+			return nsErrMsg{err}
 		}
 		return nsLoadedMsg{ns}
 	}
@@ -201,7 +212,7 @@ func (a *App) saveNameservers(domain string, ns []string) tea.Cmd {
 	return func() tea.Msg {
 		err := a.client.UpdateNameservers(context.Background(), domain, ns)
 		if err != nil {
-			return errMsg{err}
+			return nsErrMsg{err}
 		}
 		return nsSavedMsg{}
 	}
@@ -305,12 +316,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.err = msg.err
 		a.loading = false
 		a.refreshing = false
-		switch a.view {
-		case ViewDNS:
-			a.dnsView.SetError(msg.err)
-		case ViewNameservers:
-			a.nameserversView.SetError(msg.err)
-		}
+
+	case dnsErrMsg:
+		a.dnsView.SetError(msg.err)
+
+	case nsErrMsg:
+		a.nameserversView.SetError(msg.err)
 
 	case tea.KeyMsg:
 		// ctrl+c always quits, even in contexts that capture other keys.
@@ -511,19 +522,13 @@ func (a *App) updateNameservers(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// Check for save command
-	if msg.String() == "ctrl+s" && a.nameserversView.IsSaving() {
-		if d := a.domainsView.SelectedDomain(); d != nil {
-			ns := a.nameserversView.GetNameservers()
-			return a, a.saveNameservers(d.Name, ns)
-		}
-	}
-
 	var cmd tea.Cmd
 	a.nameserversView, cmd = a.nameserversView.Update(msg)
 
-	// Check if save was triggered
-	if a.nameserversView.IsSaving() {
+	// Fire the save exactly once per request: TakeSaveRequest is
+	// edge-triggered, unlike IsSaving, which stays true for the whole
+	// in-flight window and would re-fire on every keypress.
+	if a.nameserversView.TakeSaveRequest() {
 		if d := a.domainsView.SelectedDomain(); d != nil {
 			ns := a.nameserversView.GetNameservers()
 			return a, a.saveNameservers(d.Name, ns)

@@ -80,20 +80,16 @@ func TestAvailabilityResultMsgReachesView(t *testing.T) {
 	}
 }
 
-func TestErrMsgRoutesToActiveView(t *testing.T) {
+func TestErrMsgSetsAppErrorAndClearsLoading(t *testing.T) {
 	a := newTestApp(false)
-	a.view = ViewDNS
 
-	a, _ = update(t, a, errMsg{errors.New("dns lookup failed")})
+	a, _ = update(t, a, errMsg{errors.New("domains load failed")})
 
 	if a.err == nil {
 		t.Error("app err not set")
 	}
 	if a.loading || a.refreshing {
 		t.Error("loading/refreshing not cleared on error")
-	}
-	if !strings.Contains(a.dnsView.View(), "dns lookup failed") {
-		t.Error("error not routed to DNS view")
 	}
 }
 
@@ -496,6 +492,65 @@ func TestTypingQInNameserverEditDoesNotQuit(t *testing.T) {
 	if a.view != ViewNameservers {
 		t.Errorf("view = %v, want ViewNameservers", a.view)
 	}
+}
+
+func TestNameserverSaveErrorOffViewClearsSaving(t *testing.T) {
+	a := newTestApp(false)
+	a.view = ViewNameservers
+	a.nameserversView.SetNameservers([]string{"ns1.example.com"})
+	a, _ = update(t, a, keyMsg("e"))
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyCtrlS}) // save in flight
+
+	// User opens help before the save fails; the error must still clear
+	// the saving state or esc is wedged forever (soft-lock class).
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyEsc}) // leave edit mode
+	a.prevView = a.view
+	a.view = ViewHelp
+	a, _ = update(t, a, nsErrMsg{errors.New("save exploded")})
+
+	if a.nameserversView.IsSaving() {
+		t.Error("saving stuck after off-view error; esc is soft-locked")
+	}
+	if !strings.Contains(a.nameserversView.View(), "save exploded") {
+		t.Error("save error not shown on return to the nameservers view")
+	}
+}
+
+func TestDNSErrorOffViewReachesDNSView(t *testing.T) {
+	a := newTestApp(false)
+	a.view = ViewHelp // user wandered off before the DNS load failed
+
+	a, _ = update(t, a, dnsErrMsg{errors.New("dns fetch failed")})
+
+	if !strings.Contains(a.dnsView.View(), "dns fetch failed") {
+		t.Error("DNS error not shown; view would render 'Loading DNS records...' forever")
+	}
+}
+
+func TestSecondCtrlSWhileSavingDoesNotFireAnotherSave(t *testing.T) {
+	// A selected domain is required: the save command targets it.
+	a := NewApp(nil, nil, []api.Domain{{Name: "example.com"}}, nil, false)
+	a.view = ViewNameservers
+	a.nameserversView.SetNameservers([]string{"ns1.example.com"})
+	a, _ = update(t, a, keyMsg("e"))
+
+	a, cmd1 := update(t, a, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd1 == nil {
+		t.Fatal("first ctrl+s queued no save command")
+	}
+
+	a, cmd2 := update(t, a, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd2 != nil {
+		t.Error("second ctrl+s during an in-flight save queued another API write")
+	}
+
+	// Arbitrary keys while saving must not re-fire the save either
+	// (the old check was level-triggered on IsSaving).
+	a, cmd3 := update(t, a, keyMsg("x"))
+	if cmd3 != nil {
+		t.Error("a keypress during an in-flight save queued another API write")
+	}
+	_ = a
 }
 
 func TestQuitKeyReturnsQuit(t *testing.T) {
