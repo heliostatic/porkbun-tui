@@ -78,6 +78,34 @@ type availabilityResultMsg struct {
 	result *api.AvailabilityResult
 }
 
+// availabilityErrMsg is distinct from errMsg so check failures reach the
+// availability view (clearing its in-flight state) regardless of which view
+// is active when they arrive.
+type availabilityErrMsg struct {
+	err error
+}
+
+// purchaseResultMsg and purchaseErrMsg are handled unconditionally for the
+// same reason as availabilityErrMsg.
+type purchaseResultMsg struct {
+	result *api.RegistrationResult
+}
+
+type purchaseErrMsg struct {
+	err error
+}
+
+// dnsErrMsg and nsErrMsg are handled unconditionally too: a load/save error
+// arriving while the user is in another view (e.g. help) must still clear
+// that view's loading/saving state, or it soft-locks.
+type dnsErrMsg struct {
+	err error
+}
+
+type nsErrMsg struct {
+	err error
+}
+
 type pricingLoadedMsg struct {
 	pricing map[string]api.TLDPricing
 }
@@ -164,7 +192,7 @@ func (a *App) loadDNS(domain string) tea.Cmd {
 	return func() tea.Msg {
 		records, err := a.client.GetDNSRecords(context.Background(), domain)
 		if err != nil {
-			return errMsg{err}
+			return dnsErrMsg{err}
 		}
 		return dnsLoadedMsg{records}
 	}
@@ -174,7 +202,7 @@ func (a *App) loadNameservers(domain string) tea.Cmd {
 	return func() tea.Msg {
 		ns, err := a.client.GetNameservers(context.Background(), domain)
 		if err != nil {
-			return errMsg{err}
+			return nsErrMsg{err}
 		}
 		return nsLoadedMsg{ns}
 	}
@@ -184,7 +212,7 @@ func (a *App) saveNameservers(domain string, ns []string) tea.Cmd {
 	return func() tea.Msg {
 		err := a.client.UpdateNameservers(context.Background(), domain, ns)
 		if err != nil {
-			return errMsg{err}
+			return nsErrMsg{err}
 		}
 		return nsSavedMsg{}
 	}
@@ -194,9 +222,19 @@ func (a *App) checkAvailability(domain string) tea.Cmd {
 	return func() tea.Msg {
 		result, err := a.client.CheckAvailability(context.Background(), domain)
 		if err != nil {
-			return errMsg{err}
+			return availabilityErrMsg{err}
 		}
 		return availabilityResultMsg{result}
+	}
+}
+
+func (a *App) purchaseDomain(domain string, costCents int) tea.Cmd {
+	return func() tea.Msg {
+		result, err := a.client.RegisterDomain(context.Background(), domain, costCents)
+		if err != nil {
+			return purchaseErrMsg{err}
+		}
+		return purchaseResultMsg{result}
 	}
 }
 
@@ -224,6 +262,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case domainsLoadedMsg:
 		a.loading = false
 		a.refreshing = false
+		a.err = nil // a successful load supersedes any earlier error banner
 		a.domainsView.SetDomains(msg.domains)
 		a.tldView.SetData(msg.domains, a.pricing)
 		a.calendarView.SetDomains(msg.domains)
@@ -248,6 +287,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case availabilityResultMsg:
 		a.availabilityView.SetResult(msg.result)
 
+	case availabilityErrMsg:
+		a.availabilityView.SetError(msg.err)
+
+	case purchaseResultMsg:
+		a.availabilityView.SetPurchaseResult(msg.result)
+		// The freshly registered domain should show up in the list.
+		if !a.demoMode {
+			a.refreshing = true
+			cmds = append(cmds, a.loadDomains())
+		}
+
+	case purchaseErrMsg:
+		a.availabilityView.SetPurchaseError(msg.err)
+
 	case pricingLoadedMsg:
 		a.pricing = msg.pricing
 		// Update TLD view with new pricing
@@ -264,24 +317,29 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.err = msg.err
 		a.loading = false
 		a.refreshing = false
-		switch a.view {
-		case ViewDNS:
-			a.dnsView.SetError(msg.err)
-		case ViewNameservers:
-			a.nameserversView.SetError(msg.err)
-		case ViewAvailability:
-			a.availabilityView.SetError(msg.err)
-		}
+
+	case dnsErrMsg:
+		a.dnsView.SetError(msg.err)
+
+	case nsErrMsg:
+		a.nameserversView.SetError(msg.err)
 
 	case tea.KeyMsg:
-		// Skip global keys when searching in domains view
-		isSearching := a.view == ViewDomains && a.domainsView.IsSearching()
+		// ctrl+c always quits, even in contexts that capture other keys.
+		if msg.String() == "ctrl+c" {
+			return a, tea.Quit
+		}
+
+		// Views with a focused text input or a modal confirmation own every
+		// printable key: q must be typeable into a domain or nameserver, and
+		// q/? must never quit or leave an armed purchase confirmation.
+		captured := a.viewCapturesKeys()
 
 		// Global keys
 		switch {
 		case key.Matches(msg, keys.Keys.Quit):
-			if isSearching {
-				break // Let search handle it
+			if captured {
+				break // Let the view handle it
 			}
 			if a.view == ViewHelp {
 				a.view = a.prevView
@@ -290,8 +348,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 
 		case key.Matches(msg, keys.Keys.Help):
-			if isSearching {
-				break // Let search handle it
+			if captured {
+				break // Let the view handle it
 			}
 			if a.view == ViewHelp {
 				a.view = a.prevView
@@ -327,6 +385,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return a, tea.Batch(cmds...)
+}
+
+// viewCapturesKeys reports whether the active view owns printable keys
+// (focused text input or modal confirmation), exempting them from the
+// global q/? bindings.
+func (a *App) viewCapturesKeys() bool {
+	switch a.view {
+	case ViewDomains:
+		return a.domainsView.IsSearching()
+	case ViewAvailability:
+		// The domain input is always focused, and the buy confirmation
+		// must swallow everything except y/n/esc.
+		return true
+	case ViewNameservers:
+		return a.nameserversView.IsEditing()
+	}
+	return false
 }
 
 func (a *App) updateDomains(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -448,19 +523,13 @@ func (a *App) updateNameservers(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// Check for save command
-	if msg.String() == "ctrl+s" && a.nameserversView.IsSaving() {
-		if d := a.domainsView.SelectedDomain(); d != nil {
-			ns := a.nameserversView.GetNameservers()
-			return a, a.saveNameservers(d.Name, ns)
-		}
-	}
-
 	var cmd tea.Cmd
 	a.nameserversView, cmd = a.nameserversView.Update(msg)
 
-	// Check if save was triggered
-	if a.nameserversView.IsSaving() {
+	// Fire the save exactly once per request: TakeSaveRequest is
+	// edge-triggered, unlike IsSaving, which stays true for the whole
+	// in-flight window and would re-fire on every keypress.
+	if a.nameserversView.TakeSaveRequest() {
 		if d := a.domainsView.SelectedDomain(); d != nil {
 			ns := a.nameserversView.GetNameservers()
 			return a, a.saveNameservers(d.Name, ns)
@@ -471,12 +540,34 @@ func (a *App) updateNameservers(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) updateAvailability(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// A pending purchase confirmation captures every key: y buys, n/esc
+	// cancels, anything else is swallowed so it cannot reach the input or
+	// start a check mid-confirmation.
+	if a.availabilityView.IsConfirming() {
+		switch msg.String() {
+		case "y":
+			domain, cents := a.availabilityView.PendingPurchase()
+			a.availabilityView.SetPurchasing()
+			return a, a.purchaseDomain(domain, cents)
+		case "n", "esc":
+			a.availabilityView.CancelBuyConfirmation()
+		}
+		return a, nil
+	}
+
+	if msg.String() == "ctrl+b" {
+		a.availabilityView.StartBuyConfirmation()
+		return a, nil
+	}
+
 	if key.Matches(msg, keys.Keys.Back) {
 		a.view = ViewDomains
 		return a, nil
 	}
 
-	if key.Matches(msg, keys.Keys.Enter) && !a.availabilityView.IsLoading() {
+	// No new check while a purchase is in flight: its result arriving would
+	// wipe the one-time purchase receipt.
+	if key.Matches(msg, keys.Keys.Enter) && !a.availabilityView.IsLoading() && !a.availabilityView.IsPurchasing() {
 		domain := a.availabilityView.GetDomain()
 		if domain != "" {
 			a.availabilityView.SetLoading(true)

@@ -67,19 +67,27 @@ func (v *DomainsView) applyFilter() {
 	query := strings.ToLower(v.searchInput.Value())
 	if query == "" {
 		v.filtered = v.domains
-		return
-	}
-
-	v.filtered = nil
-	for _, d := range v.domains {
-		if strings.Contains(strings.ToLower(d.Name), query) {
-			v.filtered = append(v.filtered, d)
+	} else {
+		v.filtered = nil
+		for _, d := range v.domains {
+			if strings.Contains(strings.ToLower(d.Name), query) {
+				v.filtered = append(v.filtered, d)
+			}
 		}
 	}
+	v.clampScroll()
+}
 
-	// Reset cursor if out of bounds
+// clampScroll keeps cursor and offset inside the filtered list whenever it
+// changes size — filtering while scrolled down, or a refresh shrinking the
+// list, otherwise leaves a stale offset that renders zero rows and a stale
+// cursor with a dead selection.
+func (v *DomainsView) clampScroll() {
 	if v.cursor >= len(v.filtered) {
 		v.cursor = max(0, len(v.filtered)-1)
+	}
+	if v.offset > v.cursor {
+		v.offset = v.cursor
 	}
 }
 
@@ -201,17 +209,11 @@ func (v *DomainsView) Update(msg tea.Msg) (*DomainsView, tea.Cmd) {
 }
 
 func (v *DomainsView) View() string {
-	if len(v.filtered) == 0 {
-		if v.searchInput.Value() != "" {
-			return "\n  No domains match your search."
-		}
-		return "\n  No domains found."
-	}
-
 	var b strings.Builder
 	b.WriteString("\n")
 
-	// Search bar if searching or filter active
+	// Search bar if searching or filter active; must render even with zero
+	// matches, or the user is left typing into an invisible input.
 	if v.searching {
 		b.WriteString("  Search: ")
 		b.WriteString(v.searchInput.View())
@@ -219,6 +221,15 @@ func (v *DomainsView) View() string {
 	} else if v.searchInput.Value() != "" {
 		b.WriteString(styles.HelpStyle.Render(fmt.Sprintf("  Filter: \"%s\" (/ to edit, esc to clear)", v.searchInput.Value())))
 		b.WriteString("\n")
+	}
+
+	if len(v.filtered) == 0 {
+		if v.searchInput.Value() != "" {
+			b.WriteString("  No domains match your search.")
+		} else {
+			b.WriteString("  No domains found.")
+		}
+		return b.String()
 	}
 
 	// Column widths
@@ -336,6 +347,8 @@ func (v *DomainsView) HelpText() string {
 		" dns  ",
 		styles.HelpStyle.Render("n"),
 		" ns  ",
+		styles.HelpStyle.Render("a"),
+		" avail  ",
 		styles.HelpStyle.Render("t"),
 		" tld  ",
 		styles.HelpStyle.Render("c"),

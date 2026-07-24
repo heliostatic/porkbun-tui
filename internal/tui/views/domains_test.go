@@ -1,10 +1,13 @@
 package views
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/bc/porkbun-tui/internal/api"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestDomainsView_SetDomains(t *testing.T) {
@@ -143,6 +146,113 @@ func TestDomainsView_FilterNoMatch(t *testing.T) {
 
 	if len(v.filtered) != 0 {
 		t.Errorf("expected 0 filtered domains, got %d", len(v.filtered))
+	}
+}
+
+// searchFor drives the view through real key events: "/" to enter search
+// mode, then the query one rune at a time.
+func searchFor(v *DomainsView, query string) *DomainsView {
+	v, _ = v.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	for _, r := range query {
+		v, _ = v.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	return v
+}
+
+func TestDomainsView_ViewShowsSearchInputWhenNoMatches(t *testing.T) {
+	v := NewDomainsView()
+	v.SetDomains([]api.Domain{{Name: "example.com", ExpireDate: time.Now()}})
+
+	v = searchFor(v, "zzz")
+
+	out := v.View()
+	if !strings.Contains(out, "Search:") {
+		t.Error("View() hides the search input when the query has no matches")
+	}
+	if !strings.Contains(out, "zzz") {
+		t.Error("View() does not show what the user has typed")
+	}
+	if !strings.Contains(out, "No domains match") {
+		t.Error("View() missing the no-match message")
+	}
+}
+
+func TestDomainsView_ViewShowsFilterHintWhenNoMatches(t *testing.T) {
+	v := NewDomainsView()
+	v.SetDomains([]api.Domain{{Name: "example.com", ExpireDate: time.Now()}})
+
+	v = searchFor(v, "zzz")
+	v, _ = v.Update(tea.KeyMsg{Type: tea.KeyEsc}) // exit search mode; filter persists
+
+	if v.IsSearching() {
+		t.Fatal("still in search mode after esc")
+	}
+	out := v.View()
+	if !strings.Contains(out, `Filter: "zzz"`) {
+		t.Error("View() hides the active filter when it has no matches")
+	}
+	if !strings.Contains(out, "esc to clear") {
+		t.Error("View() does not tell the user how to clear the filter")
+	}
+}
+
+func manyDomains(n int) []api.Domain {
+	domains := make([]api.Domain, n)
+	for i := range domains {
+		domains[i] = api.Domain{
+			Name:       fmt.Sprintf("domain%02d.com", i),
+			ExpireDate: time.Now().AddDate(0, 0, i+1),
+		}
+	}
+	return domains
+}
+
+// scrollToBottom drives the cursor to the last row via real key events so
+// offset advances the way it does for a user.
+func scrollToBottom(v *DomainsView, n int) *DomainsView {
+	for i := 0; i < n; i++ {
+		v, _ = v.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	return v
+}
+
+func TestDomainsView_FilterWhileScrolledRendersMatches(t *testing.T) {
+	v := NewDomainsView()
+	v.SetSize(80, 20) // height-6 = 14 visible rows
+	v.SetDomains(manyDomains(50))
+	v = scrollToBottom(v, 49)
+
+	v = searchFor(v, "domain01")
+
+	out := v.View()
+	if !strings.Contains(out, "domain01.com") {
+		t.Errorf("matching row not rendered; offset was not clamped after filtering.\nView:\n%s", out)
+	}
+}
+
+func TestDomainsView_ShrinkingRefreshClampsCursorAndOffset(t *testing.T) {
+	v := NewDomainsView()
+	v.SetSize(80, 20)
+	v.SetDomains(manyDomains(50))
+	v = scrollToBottom(v, 49)
+
+	// Background refresh (e.g. after a purchase) shrinks the list.
+	v.SetDomains(manyDomains(5))
+
+	selected := v.SelectedDomain()
+	if selected == nil {
+		t.Fatal("SelectedDomain() = nil after shrink; enter/d/n are dead")
+	}
+	if !strings.Contains(v.View(), selected.Name) {
+		t.Error("selected row not rendered after shrink; offset was not clamped")
+	}
+}
+
+func TestDomainsView_HelpTextDocumentsAvailability(t *testing.T) {
+	v := NewDomainsView()
+
+	if !strings.Contains(v.HelpText(), "avail") {
+		t.Error("quick help bar does not mention the availability checker (a)")
 	}
 }
 

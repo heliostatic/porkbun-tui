@@ -1,16 +1,32 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bc/porkbun-tui/internal/config"
 	"github.com/tuzzmaniandevil/porkbun-go"
 )
 
+const defaultBaseURL = "https://api.porkbun.com/api/json/v3"
+
 type Client struct {
-	pb *porkbun.Client
+	pb         *porkbun.Client
+	apiKey     string
+	secretKey  string
+	baseURL    string
+	httpClient *http.Client
+	// purchaseClient gets a longer timeout: registration is slow, and a
+	// premature client timeout leaves the user unsure whether they were
+	// charged. Falls back to httpClient when nil (tests).
+	purchaseClient *http.Client
 }
 
 type Domain struct {
@@ -55,7 +71,14 @@ func NewClient(cfg *config.Config) *Client {
 		ApiKey:       cfg.APIKey,
 		SecretApiKey: cfg.SecretKey,
 	})
-	return &Client{pb: pb}
+	return &Client{
+		pb:             pb,
+		apiKey:         cfg.APIKey,
+		secretKey:      cfg.SecretKey,
+		baseURL:        defaultBaseURL,
+		httpClient:     &http.Client{Timeout: 15 * time.Second},
+		purchaseClient: &http.Client{Timeout: 60 * time.Second},
+	}
 }
 
 func (c *Client) Ping(ctx context.Context) (string, error) {
@@ -139,16 +162,197 @@ func (c *Client) UpdateNameservers(ctx context.Context, domain string, nameserve
 	return err
 }
 
+type checkDomainResponse struct {
+	Status   string `json:"status"`
+	Message  string `json:"message"`
+	Response struct {
+		Avail   string `json:"avail"`
+		Price   string `json:"price"`
+		Premium string `json:"premium"`
+	} `json:"response"`
+}
+
+// CheckAvailability calls Porkbun's checkDomain endpoint directly because the
+// porkbun-go SDK (v1.0.2) does not expose it. Porkbun rate-limits this
+// endpoint to one check per 10 seconds.
 func (c *Client) CheckAvailability(ctx context.Context, domain string) (*AvailabilityResult, error) {
-	// The porkbun-go SDK doesn't seem to have domain availability check
-	// We'll need to make a direct API call or use the pricing endpoint
-	// For now, return a placeholder that indicates this feature needs implementation
+	body, err := json.Marshal(map[string]string{
+		"apikey":       c.apiKey,
+		"secretapikey": c.secretKey,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint := fmt.Sprintf("%s/domain/checkDomain/%s", c.baseURL, url.PathEscape(domain))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var parsed checkDomainResponse
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("porkbun: checkDomain returned HTTP %d with an invalid body: %w", resp.StatusCode, err)
+	}
+	if parsed.Status != "SUCCESS" {
+		if parsed.Message != "" {
+			return nil, fmt.Errorf("porkbun: %s", parsed.Message)
+		}
+		return nil, fmt.Errorf("porkbun: checkDomain failed (HTTP %d)", resp.StatusCode)
+	}
+	// A SUCCESS body without an avail field means the response shape drifted
+	// or a different handler answered; guessing "taken" would be silently wrong.
+	if parsed.Response.Avail != "yes" && parsed.Response.Avail != "no" {
+		return nil, fmt.Errorf("porkbun: checkDomain response missing availability status")
+	}
+
 	return &AvailabilityResult{
 		Domain:    domain,
-		Available: false,
-		Price:     "Feature not yet implemented in SDK",
-		Premium:   false,
+		Available: parsed.Response.Avail == "yes",
+		Price:     parsed.Response.Price,
+		Premium:   parsed.Response.Premium == "yes",
 	}, nil
+}
+
+// NewClientWithBaseURL is NewClient with the API base URL overridden — for
+// tests that point the client at a local server.
+func NewClientWithBaseURL(cfg *config.Config, baseURL string) *Client {
+	c := NewClient(cfg)
+	c.baseURL = baseURL
+	return c
+}
+
+type RegistrationResult struct {
+	Domain       string
+	OrderID      int
+	CostCents    int
+	BalanceCents int
+}
+
+type createDomainResponse struct {
+	Status         string `json:"status"`
+	Message        string `json:"message"`
+	Domain         string `json:"domain"`
+	Cost           int    `json:"cost"`
+	CostInCents    int    `json:"costInCents"`
+	OrderID        int    `json:"orderId"`
+	Balance        int    `json:"balance"`
+	BalanceInCents int    `json:"balanceInCents"`
+}
+
+// DollarsToCents converts an API price string like "11.06" to cents. The
+// create endpoint takes the expected cost in cents as a price-confirmation
+// guard, so anything questionable must abort the purchase rather than guess:
+// only plain digit strings are accepted (Atoi's "+5" is not), the whole part
+// is bounded well below integer overflow, and a zero price is rejected — a
+// "Buy for $0.00" prompt is never legitimate.
+func DollarsToCents(price string) (int, error) {
+	s := strings.TrimSpace(price)
+	whole, frac, hasFrac := strings.Cut(s, ".")
+
+	// 8 digits caps at $99,999,999 — far above any real domain price and
+	// far below where cents arithmetic could wrap.
+	if whole == "" || len(whole) > 8 || !isASCIIDigits(whole) {
+		return 0, fmt.Errorf("invalid price %q", price)
+	}
+	w, _ := strconv.Atoi(whole)
+	cents := w * 100
+
+	if hasFrac {
+		if len(frac) < 1 || len(frac) > 2 || !isASCIIDigits(frac) {
+			return 0, fmt.Errorf("invalid price %q", price)
+		}
+		f, _ := strconv.Atoi(frac)
+		if len(frac) == 1 {
+			f *= 10
+		}
+		cents += f
+	}
+
+	if cents == 0 {
+		return 0, fmt.Errorf("invalid price %q", price)
+	}
+	return cents, nil
+}
+
+func isASCIIDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// RegisterDomain purchases a domain, charging the account's Porkbun balance.
+// costCents must be the price from a preceding availability check; Porkbun
+// uses it to reject the purchase if the real price differs. Like
+// CheckAvailability, this calls the endpoint directly — the porkbun-go SDK
+// does not expose it.
+func (c *Client) RegisterDomain(ctx context.Context, domain string, costCents int) (*RegistrationResult, error) {
+	body, err := json.Marshal(map[string]any{
+		"apikey":       c.apiKey,
+		"secretapikey": c.secretKey,
+		"cost":         costCents,
+		"agreeToTerms": "yes",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint := fmt.Sprintf("%s/domain/create/%s", c.baseURL, url.PathEscape(domain))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := c.httpClient
+	if c.purchaseClient != nil {
+		httpClient = c.purchaseClient
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		// The request may have reached Porkbun before the failure; a timeout
+		// here does not mean the account was not charged.
+		return nil, fmt.Errorf("porkbun: create request failed — the purchase may still have completed, check your Porkbun account before retrying: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var parsed createDomainResponse
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("porkbun: create returned HTTP %d with an invalid body: %w", resp.StatusCode, err)
+	}
+	if parsed.Status != "SUCCESS" {
+		if parsed.Message != "" {
+			return nil, fmt.Errorf("porkbun: %s", parsed.Message)
+		}
+		return nil, fmt.Errorf("porkbun: create failed (HTTP %d)", resp.StatusCode)
+	}
+
+	result := &RegistrationResult{
+		Domain:       parsed.Domain,
+		OrderID:      parsed.OrderID,
+		CostCents:    parsed.Cost,
+		BalanceCents: parsed.Balance,
+	}
+	if result.Domain == "" {
+		result.Domain = domain
+	}
+	if parsed.CostInCents != 0 {
+		result.CostCents = parsed.CostInCents
+	}
+	if parsed.BalanceInCents != 0 {
+		result.BalanceCents = parsed.BalanceInCents
+	}
+	return result, nil
 }
 
 func (c *Client) GetPricing(ctx context.Context) (map[string]TLDPricing, error) {

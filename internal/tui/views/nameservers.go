@@ -49,10 +49,13 @@ type NameserversView struct {
 	presetIdx   int
 	loading     bool
 	saving      bool
-	err         error
-	success     string
-	width       int
-	height      int
+	// saveRequested is the one-shot edge for the app to fire the actual
+	// save; saving stays true for the whole in-flight window.
+	saveRequested bool
+	err           error
+	success       string
+	width         int
+	height        int
 }
 
 func NewNameserversView() *NameserversView {
@@ -120,10 +123,29 @@ func (v *NameserversView) IsSaving() bool {
 	return v.saving
 }
 
+// IsEditing reports whether a text input is focused; the app must not let
+// global key bindings (q, ?) steal printable keys while it is true.
+func (v *NameserversView) IsEditing() bool {
+	return v.mode == NSViewModeEdit
+}
+
 func (v *NameserversView) StartSaving() {
+	if v.saving {
+		return // a save is already in flight; don't queue another
+	}
 	v.saving = true
+	v.saveRequested = true
 	v.err = nil
 	v.success = ""
+}
+
+// TakeSaveRequest returns true exactly once per StartSaving call.
+func (v *NameserversView) TakeSaveRequest() bool {
+	if v.saveRequested {
+		v.saveRequested = false
+		return true
+	}
+	return false
 }
 
 func (v *NameserversView) Update(msg tea.Msg) (*NameserversView, tea.Cmd) {

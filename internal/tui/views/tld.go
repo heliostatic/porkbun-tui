@@ -59,9 +59,13 @@ func (v *TLDView) SetData(domains []api.Domain, pricing map[string]api.TLDPricin
 		})
 	}
 
-	// Sort by total cost (highest first)
+	// Sort by total cost (highest first); tie-break on TLD so the order is
+	// deterministic even when prices are missing (groups come from a map).
 	sort.Slice(v.groups, func(i, j int) bool {
-		return v.groups[i].TotalCost > v.groups[j].TotalCost
+		if v.groups[i].TotalCost != v.groups[j].TotalCost {
+			return v.groups[i].TotalCost > v.groups[j].TotalCost
+		}
+		return v.groups[i].TLD < v.groups[j].TLD
 	})
 
 	v.cursor = 0
