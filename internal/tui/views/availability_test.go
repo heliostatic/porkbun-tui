@@ -45,11 +45,27 @@ func TestAvailabilityViewRendersStatuses(t *testing.T) {
 	v.SetResult(&api.AvailabilityResult{Domain: "open.com", Available: true, Price: "11.06"})
 	v.SetResult(&api.AvailabilityResult{Domain: "fancy.com", Available: true, Price: "1200.00", Premium: true})
 
-	out := v.View()
-	for _, want := range []string{"AVAILABLE", "TAKEN", "11.06", "(premium)", "taken.com", "open.com", "fancy.com"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("View() missing %q", want)
+	// Assert per row so a status/domain mix-up ("taken.com AVAILABLE") fails.
+	rows := map[string][]string{
+		"taken.com": {"TAKEN"},
+		"open.com":  {"AVAILABLE", "11.06"},
+		"fancy.com": {"AVAILABLE", "1200.00", "(premium)"},
+	}
+	for _, line := range strings.Split(v.View(), "\n") {
+		for domain, wants := range rows {
+			if !strings.Contains(line, domain) {
+				continue
+			}
+			for _, want := range wants {
+				if !strings.Contains(line, want) {
+					t.Errorf("row for %s missing %q: %q", domain, want, line)
+				}
+			}
+			delete(rows, domain)
 		}
+	}
+	for domain := range rows {
+		t.Errorf("View() has no row for %s", domain)
 	}
 }
 

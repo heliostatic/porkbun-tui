@@ -78,6 +78,13 @@ type availabilityResultMsg struct {
 	result *api.AvailabilityResult
 }
 
+// availabilityErrMsg is distinct from errMsg so check failures reach the
+// availability view (clearing its in-flight state) regardless of which view
+// is active when they arrive.
+type availabilityErrMsg struct {
+	err error
+}
+
 type pricingLoadedMsg struct {
 	pricing map[string]api.TLDPricing
 }
@@ -194,7 +201,7 @@ func (a *App) checkAvailability(domain string) tea.Cmd {
 	return func() tea.Msg {
 		result, err := a.client.CheckAvailability(context.Background(), domain)
 		if err != nil {
-			return errMsg{err}
+			return availabilityErrMsg{err}
 		}
 		return availabilityResultMsg{result}
 	}
@@ -248,6 +255,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case availabilityResultMsg:
 		a.availabilityView.SetResult(msg.result)
 
+	case availabilityErrMsg:
+		a.availabilityView.SetError(msg.err)
+
 	case pricingLoadedMsg:
 		a.pricing = msg.pricing
 		// Update TLD view with new pricing
@@ -269,8 +279,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.dnsView.SetError(msg.err)
 		case ViewNameservers:
 			a.nameserversView.SetError(msg.err)
-		case ViewAvailability:
-			a.availabilityView.SetError(msg.err)
 		}
 
 	case tea.KeyMsg:
