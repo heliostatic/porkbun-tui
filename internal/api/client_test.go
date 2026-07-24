@@ -153,6 +153,157 @@ func TestCheckAvailabilityEscapesDomainInPath(t *testing.T) {
 	}
 }
 
+func TestDollarsToCents(t *testing.T) {
+	valid := map[string]int{
+		"2.04":    204,
+		"11.06":   1106,
+		"1200.00": 120000,
+		"7":       700,
+		"7.5":     750,
+		"0.99":    99,
+		" 3.10 ":  310,
+	}
+	for in, want := range valid {
+		got, err := DollarsToCents(in)
+		if err != nil {
+			t.Errorf("DollarsToCents(%q) error: %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("DollarsToCents(%q) = %d, want %d", in, got, want)
+		}
+	}
+
+	invalid := []string{"", "abc", "1.2.3", "-1.00", "-0.50", "1.234", "$2.04", "."}
+	for _, in := range invalid {
+		if got, err := DollarsToCents(in); err == nil {
+			t.Errorf("DollarsToCents(%q) = %d, want error", in, got)
+		}
+	}
+}
+
+func TestRegisterDomainSuccess(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decoding request body: %v", err)
+		}
+		w.Write([]byte(`{"status":"SUCCESS","domain":"newdomain.com","cost":868,"orderId":123456,"balance":5000}`))
+	}))
+	defer server.Close()
+
+	c := newTestClient(server.URL)
+	result, err := c.RegisterDomain(context.Background(), "newdomain.com", 868)
+	if err != nil {
+		t.Fatalf("RegisterDomain returned error: %v", err)
+	}
+
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/domain/create/newdomain.com" {
+		t.Errorf("path = %q, want /domain/create/newdomain.com", gotPath)
+	}
+	if gotBody["apikey"] != "pk1_test" || gotBody["secretapikey"] != "sk1_test" {
+		t.Errorf("request body missing credentials: %v", gotBody)
+	}
+	// JSON numbers decode as float64; the cost must be sent as a number, not a string.
+	if cost, ok := gotBody["cost"].(float64); !ok || cost != 868 {
+		t.Errorf("request cost = %v (%T), want number 868", gotBody["cost"], gotBody["cost"])
+	}
+	if gotBody["agreeToTerms"] != "yes" {
+		t.Errorf("agreeToTerms = %v, want \"yes\"", gotBody["agreeToTerms"])
+	}
+
+	if result.Domain != "newdomain.com" {
+		t.Errorf("result.Domain = %q, want newdomain.com", result.Domain)
+	}
+	if result.OrderID != 123456 {
+		t.Errorf("result.OrderID = %d, want 123456", result.OrderID)
+	}
+	if result.CostCents != 868 {
+		t.Errorf("result.CostCents = %d, want 868", result.CostCents)
+	}
+	if result.BalanceCents != 5000 {
+		t.Errorf("result.BalanceCents = %d, want 5000", result.BalanceCents)
+	}
+}
+
+func TestRegisterDomainAcceptsInCentsFieldNames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"SUCCESS","domain":"newdomain.com","costInCents":868,"orderId":9,"balanceInCents":5000}`))
+	}))
+	defer server.Close()
+
+	c := newTestClient(server.URL)
+	result, err := c.RegisterDomain(context.Background(), "newdomain.com", 868)
+	if err != nil {
+		t.Fatalf("RegisterDomain returned error: %v", err)
+	}
+	if result.CostCents != 868 || result.BalanceCents != 5000 {
+		t.Errorf("cost/balance = %d/%d, want 868/5000 from *InCents fields", result.CostCents, result.BalanceCents)
+	}
+}
+
+func TestRegisterDomainEscapesDomainInPath(t *testing.T) {
+	var gotEscapedPath, gotRawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotEscapedPath = r.URL.EscapedPath()
+		gotRawQuery = r.URL.RawQuery
+		w.Write([]byte(`{"status":"SUCCESS","domain":"x","cost":1,"orderId":1,"balance":1}`))
+	}))
+	defer server.Close()
+
+	c := newTestClient(server.URL)
+	if _, err := c.RegisterDomain(context.Background(), "a/b?x=1", 100); err != nil {
+		t.Fatalf("RegisterDomain returned error: %v", err)
+	}
+	if gotEscapedPath != "/domain/create/a%2Fb%3Fx=1" {
+		t.Errorf("escaped path = %q, want /domain/create/a%%2Fb%%3Fx=1", gotEscapedPath)
+	}
+	if gotRawQuery != "" {
+		t.Errorf("query = %q, want empty", gotRawQuery)
+	}
+}
+
+func TestRegisterDomainAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"status":"ERROR","message":"Domain is not available."}`))
+	}))
+	defer server.Close()
+
+	c := newTestClient(server.URL)
+	_, err := c.RegisterDomain(context.Background(), "taken.com", 868)
+	if err == nil {
+		t.Fatal("RegisterDomain returned nil error, want error")
+	}
+	if !strings.Contains(err.Error(), "Domain is not available") {
+		t.Errorf("error %q does not contain API message", err)
+	}
+}
+
+func TestRegisterDomainNonJSONErrorIncludesHTTPStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`<html>down</html>`))
+	}))
+	defer server.Close()
+
+	c := newTestClient(server.URL)
+	_, err := c.RegisterDomain(context.Background(), "newdomain.com", 868)
+	if err == nil {
+		t.Fatal("RegisterDomain returned nil error, want error")
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Errorf("error %q does not mention HTTP status 503", err)
+	}
+}
+
 func TestCheckAvailabilityMalformedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`not json`))

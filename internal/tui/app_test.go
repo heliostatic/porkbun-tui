@@ -243,6 +243,154 @@ func TestAvailabilityEnterWithEmptyInputDoesNothing(t *testing.T) {
 	}
 }
 
+// buyReadyApp returns an app in the availability view with a fresh
+// AVAILABLE result, ready for the buy flow.
+func buyReadyApp(t *testing.T) *App {
+	t.Helper()
+	a := newTestApp(false)
+	a.view = ViewAvailability
+	a, _ = update(t, a, availabilityResultMsg{&api.AvailabilityResult{
+		Domain: "fresh.xyz", Available: true, Price: "2.04",
+	}})
+	return a
+}
+
+func TestAvailabilityCtrlBEntersConfirmation(t *testing.T) {
+	a := buyReadyApp(t)
+
+	a, cmd := update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+
+	if !a.availabilityView.IsConfirming() {
+		t.Error("ctrl+b did not enter buy confirmation")
+	}
+	if cmd != nil {
+		t.Error("ctrl+b queued a command; nothing should fire before y")
+	}
+}
+
+func TestAvailabilityConfirmYStartsPurchase(t *testing.T) {
+	a := buyReadyApp(t)
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+
+	a, cmd := update(t, a, keyMsg("y"))
+
+	if !a.availabilityView.IsPurchasing() {
+		t.Error("view not purchasing after y")
+	}
+	if a.availabilityView.IsConfirming() {
+		t.Error("still confirming after y")
+	}
+	if cmd == nil {
+		t.Error("no purchase command queued after y")
+	}
+}
+
+func TestAvailabilityConfirmNCancels(t *testing.T) {
+	a := buyReadyApp(t)
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+
+	a, cmd := update(t, a, keyMsg("n"))
+
+	if a.availabilityView.IsConfirming() {
+		t.Error("still confirming after n")
+	}
+	if a.availabilityView.IsPurchasing() {
+		t.Error("purchasing after cancel")
+	}
+	if cmd != nil {
+		t.Error("cancel queued a command")
+	}
+}
+
+func TestAvailabilityConfirmEscCancelsWithoutLeavingView(t *testing.T) {
+	a := buyReadyApp(t)
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyEsc})
+
+	if a.view != ViewAvailability {
+		t.Error("esc during confirmation left the availability view")
+	}
+	if a.availabilityView.IsConfirming() {
+		t.Error("still confirming after esc")
+	}
+}
+
+func TestAvailabilityKeysSwallowedWhileConfirming(t *testing.T) {
+	a := buyReadyApp(t)
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+
+	a, cmd := update(t, a, keyMsg("x"))
+
+	if got := a.availabilityView.GetDomain(); got != "" {
+		t.Errorf("typed rune reached the input during confirmation: %q", got)
+	}
+	if cmd != nil {
+		t.Error("swallowed key queued a command")
+	}
+	if !a.availabilityView.IsConfirming() {
+		t.Error("stray key ended the confirmation")
+	}
+}
+
+func TestAvailabilityEnterDoesNotCheckWhileConfirming(t *testing.T) {
+	a := buyReadyApp(t)
+	for _, r := range "x.com" {
+		a, _ = update(t, a, keyMsg(string(r)))
+	}
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+
+	a, cmd := update(t, a, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if cmd != nil {
+		t.Error("enter fired a command while confirming a purchase")
+	}
+	if a.availabilityView.IsLoading() {
+		t.Error("a check started while confirming a purchase")
+	}
+}
+
+func TestPurchaseResultMsgRefreshesDomains(t *testing.T) {
+	a := buyReadyApp(t)
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+	a, _ = update(t, a, keyMsg("y"))
+
+	a, cmd := update(t, a, purchaseResultMsg{&api.RegistrationResult{
+		Domain: "fresh.xyz", OrderID: 123456, CostCents: 204, BalanceCents: 5000,
+	}})
+
+	if a.availabilityView.IsPurchasing() {
+		t.Error("still purchasing after result")
+	}
+	if !strings.Contains(a.availabilityView.View(), "Registered") {
+		t.Error("success not shown in availability view")
+	}
+	if !a.refreshing {
+		t.Error("domains not refreshing after a purchase")
+	}
+	if cmd == nil {
+		t.Error("no refresh command queued after a purchase")
+	}
+}
+
+func TestPurchaseErrMsgClearsPurchasingOffView(t *testing.T) {
+	a := buyReadyApp(t)
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+	a, _ = update(t, a, keyMsg("y"))
+
+	// Navigate away before the purchase fails; the error must still clear
+	// the in-flight state (same defect class as the availability soft-lock).
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyEsc})
+	a, _ = update(t, a, purchaseErrMsg{errors.New("insufficient funds")})
+
+	if a.availabilityView.IsPurchasing() {
+		t.Error("purchase error off-view left the buy flow soft-locked")
+	}
+	if !strings.Contains(a.availabilityView.View(), "insufficient funds") {
+		t.Error("purchase error not shown on return to the view")
+	}
+}
+
 func TestQuitKeyReturnsQuit(t *testing.T) {
 	a := newTestApp(false)
 	_, cmd := update(t, a, keyMsg("q"))

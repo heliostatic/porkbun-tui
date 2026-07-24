@@ -111,6 +111,163 @@ func TestAvailabilityViewRendersError(t *testing.T) {
 	}
 }
 
+func TestAvailabilityBuyConfirmationTargetsLatestAvailable(t *testing.T) {
+	v := NewAvailabilityView()
+	v.SetResult(&api.AvailabilityResult{Domain: "old-taken.com", Available: false})
+	v.SetResult(&api.AvailabilityResult{Domain: "fresh.xyz", Available: true, Price: "2.04"})
+
+	v.StartBuyConfirmation()
+
+	if !v.IsConfirming() {
+		t.Fatal("not confirming after StartBuyConfirmation on an available latest result")
+	}
+	domain, cents := v.PendingPurchase()
+	if domain != "fresh.xyz" {
+		t.Errorf("pending domain = %q, want fresh.xyz", domain)
+	}
+	if cents != 204 {
+		t.Errorf("pending cents = %d, want 204", cents)
+	}
+}
+
+func TestAvailabilityBuyConfirmationRefusedWhenLatestTaken(t *testing.T) {
+	v := NewAvailabilityView()
+	v.SetResult(&api.AvailabilityResult{Domain: "open.com", Available: true, Price: "9.00"})
+	// The taken result carries a parsable price so this test pins the
+	// availability guard itself, not the price-parse guard behind it.
+	v.SetResult(&api.AvailabilityResult{Domain: "taken.com", Available: false, Price: "9.99"})
+
+	v.StartBuyConfirmation()
+
+	if v.IsConfirming() {
+		t.Error("confirming a purchase when the latest check is TAKEN")
+	}
+}
+
+func TestAvailabilityBuyConfirmationRefusedWithNoResults(t *testing.T) {
+	v := NewAvailabilityView()
+
+	v.StartBuyConfirmation()
+
+	if v.IsConfirming() {
+		t.Error("confirming a purchase with no results")
+	}
+}
+
+func TestAvailabilityBuyConfirmationRejectsUnparsablePrice(t *testing.T) {
+	v := NewAvailabilityView()
+	v.SetResult(&api.AvailabilityResult{Domain: "weird.com", Available: true, Price: "N/A"})
+
+	v.StartBuyConfirmation()
+
+	if v.IsConfirming() {
+		t.Error("confirming a purchase with an unparsable price")
+	}
+	if !strings.Contains(v.View(), "N/A") {
+		t.Error("View() does not surface the unparsable price problem")
+	}
+}
+
+func TestAvailabilityBuyConfirmationRefusedWhilePurchasing(t *testing.T) {
+	v := NewAvailabilityView()
+	v.SetResult(&api.AvailabilityResult{Domain: "fresh.xyz", Available: true, Price: "2.04"})
+	v.StartBuyConfirmation()
+	v.SetPurchasing()
+
+	v.StartBuyConfirmation()
+
+	if v.IsConfirming() {
+		t.Error("confirmation restarted while a purchase is in flight")
+	}
+}
+
+func TestAvailabilityViewRendersConfirmationPrompt(t *testing.T) {
+	v := NewAvailabilityView()
+	v.SetResult(&api.AvailabilityResult{Domain: "fresh.xyz", Available: true, Price: "2.04"})
+	v.StartBuyConfirmation()
+
+	out := v.View()
+	for _, want := range []string{"fresh.xyz", "$2.04", "balance", "y", "n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("confirmation prompt missing %q", want)
+		}
+	}
+}
+
+func TestAvailabilityCancelBuyConfirmation(t *testing.T) {
+	v := NewAvailabilityView()
+	v.SetResult(&api.AvailabilityResult{Domain: "fresh.xyz", Available: true, Price: "2.04"})
+	v.StartBuyConfirmation()
+
+	v.CancelBuyConfirmation()
+
+	if v.IsConfirming() {
+		t.Error("still confirming after cancel")
+	}
+	if v.IsPurchasing() {
+		t.Error("purchasing after cancel")
+	}
+}
+
+func TestAvailabilityPurchaseResultRendersSuccess(t *testing.T) {
+	v := NewAvailabilityView()
+	v.SetResult(&api.AvailabilityResult{Domain: "fresh.xyz", Available: true, Price: "2.04"})
+	v.StartBuyConfirmation()
+	v.SetPurchasing()
+
+	v.SetPurchaseResult(&api.RegistrationResult{
+		Domain: "fresh.xyz", OrderID: 123456, CostCents: 204, BalanceCents: 5000,
+	})
+
+	if v.IsPurchasing() {
+		t.Error("still purchasing after result")
+	}
+	out := v.View()
+	for _, want := range []string{"Registered", "fresh.xyz", "123456", "$50.00"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("success message missing %q", want)
+		}
+	}
+}
+
+func TestAvailabilityPurchaseErrorClearsPurchasing(t *testing.T) {
+	v := NewAvailabilityView()
+	v.SetResult(&api.AvailabilityResult{Domain: "fresh.xyz", Available: true, Price: "2.04"})
+	v.StartBuyConfirmation()
+	v.SetPurchasing()
+
+	v.SetPurchaseError(errors.New("insufficient funds"))
+
+	if v.IsPurchasing() {
+		t.Error("still purchasing after error; buy flow is soft-locked")
+	}
+	if !strings.Contains(v.View(), "insufficient funds") {
+		t.Error("purchase error not rendered")
+	}
+}
+
+func TestAvailabilityNewCheckClearsPurchaseMessage(t *testing.T) {
+	v := NewAvailabilityView()
+	v.SetResult(&api.AvailabilityResult{Domain: "fresh.xyz", Available: true, Price: "2.04"})
+	v.StartBuyConfirmation()
+	v.SetPurchasing()
+	v.SetPurchaseResult(&api.RegistrationResult{Domain: "fresh.xyz", OrderID: 1, CostCents: 204, BalanceCents: 100})
+
+	v.SetResult(&api.AvailabilityResult{Domain: "next.com", Available: false})
+
+	if strings.Contains(v.View(), "Registered") {
+		t.Error("stale purchase success message shown after a new check")
+	}
+}
+
+func TestAvailabilityHelpTextMentionsBuy(t *testing.T) {
+	v := NewAvailabilityView()
+
+	if !strings.Contains(v.HelpText(), "buy") {
+		t.Error("help text does not document the buy key")
+	}
+}
+
 func TestAvailabilityGetDomainTrimsWhitespace(t *testing.T) {
 	v := NewAvailabilityView()
 	v.input.SetValue("  example.com  ")

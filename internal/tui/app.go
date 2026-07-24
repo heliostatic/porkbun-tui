@@ -85,6 +85,16 @@ type availabilityErrMsg struct {
 	err error
 }
 
+// purchaseResultMsg and purchaseErrMsg are handled unconditionally for the
+// same reason as availabilityErrMsg.
+type purchaseResultMsg struct {
+	result *api.RegistrationResult
+}
+
+type purchaseErrMsg struct {
+	err error
+}
+
 type pricingLoadedMsg struct {
 	pricing map[string]api.TLDPricing
 }
@@ -207,6 +217,16 @@ func (a *App) checkAvailability(domain string) tea.Cmd {
 	}
 }
 
+func (a *App) purchaseDomain(domain string, costCents int) tea.Cmd {
+	return func() tea.Msg {
+		result, err := a.client.RegisterDomain(context.Background(), domain, costCents)
+		if err != nil {
+			return purchaseErrMsg{err}
+		}
+		return purchaseResultMsg{result}
+	}
+}
+
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -257,6 +277,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case availabilityErrMsg:
 		a.availabilityView.SetError(msg.err)
+
+	case purchaseResultMsg:
+		a.availabilityView.SetPurchaseResult(msg.result)
+		// The freshly registered domain should show up in the list.
+		if !a.demoMode {
+			a.refreshing = true
+			cmds = append(cmds, a.loadDomains())
+		}
+
+	case purchaseErrMsg:
+		a.availabilityView.SetPurchaseError(msg.err)
 
 	case pricingLoadedMsg:
 		a.pricing = msg.pricing
@@ -479,6 +510,26 @@ func (a *App) updateNameservers(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) updateAvailability(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// A pending purchase confirmation captures every key: y buys, n/esc
+	// cancels, anything else is swallowed so it cannot reach the input or
+	// start a check mid-confirmation.
+	if a.availabilityView.IsConfirming() {
+		switch msg.String() {
+		case "y":
+			domain, cents := a.availabilityView.PendingPurchase()
+			a.availabilityView.SetPurchasing()
+			return a, a.purchaseDomain(domain, cents)
+		case "n", "esc":
+			a.availabilityView.CancelBuyConfirmation()
+		}
+		return a, nil
+	}
+
+	if msg.String() == "ctrl+b" {
+		a.availabilityView.StartBuyConfirmation()
+		return a, nil
+	}
+
 	if key.Matches(msg, keys.Keys.Back) {
 		a.view = ViewDomains
 		return a, nil

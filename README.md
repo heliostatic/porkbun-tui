@@ -32,6 +32,7 @@ A terminal UI for managing your [Porkbun](https://porkbun.com) domains.
 - **TLD Breakdown** - See domains grouped by TLD with renewal costs
 - **Calendar View** - See domains grouped by expiration month
 - **Domain Availability** - Check if a domain is available for registration, with pricing (Porkbun rate-limits checks to one per 10 seconds)
+- **Domain Purchase** - Register an available domain right from the checker (`ctrl+b`, with a y/n price confirmation); charges your Porkbun account balance
 - **Offline-First** - Cached data loads instantly, refreshes in background
 
 ## Installation

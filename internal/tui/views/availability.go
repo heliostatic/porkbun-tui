@@ -18,6 +18,13 @@ type AvailabilityView struct {
 	err     error
 	width   int
 	height  int
+
+	// Buy flow: confirming is the result awaiting a y/n answer,
+	// pendingCents its price converted for the create endpoint.
+	confirming   *api.AvailabilityResult
+	pendingCents int
+	purchasing   bool
+	purchased    string
 }
 
 func NewAvailabilityView() *AvailabilityView {
@@ -44,6 +51,7 @@ func (v *AvailabilityView) SetLoading(loading bool) {
 func (v *AvailabilityView) SetResult(result *api.AvailabilityResult) {
 	v.loading = false
 	v.err = nil
+	v.purchased = ""
 	if result != nil {
 		v.results = append([]api.AvailabilityResult{*result}, v.results...)
 		// Keep only last 10 results
@@ -68,6 +76,71 @@ func (v *AvailabilityView) ClearInput() {
 
 func (v *AvailabilityView) IsLoading() bool {
 	return v.loading
+}
+
+// StartBuyConfirmation arms the y/n purchase prompt for the most recent
+// check. It refuses quietly when there is nothing buyable (no results,
+// latest is taken, or a purchase is already in flight) and surfaces an
+// error when the price cannot be converted to cents.
+func (v *AvailabilityView) StartBuyConfirmation() {
+	if v.purchasing || v.confirming != nil || len(v.results) == 0 {
+		return
+	}
+	latest := v.results[0]
+	if !latest.Available {
+		return
+	}
+	cents, err := api.DollarsToCents(latest.Price)
+	if err != nil {
+		v.err = fmt.Errorf("cannot buy %s: unparsable price %q", latest.Domain, latest.Price)
+		return
+	}
+	v.confirming = &latest
+	v.pendingCents = cents
+	v.err = nil
+	v.purchased = ""
+}
+
+func (v *AvailabilityView) IsConfirming() bool {
+	return v.confirming != nil
+}
+
+func (v *AvailabilityView) PendingPurchase() (string, int) {
+	if v.confirming == nil {
+		return "", 0
+	}
+	return v.confirming.Domain, v.pendingCents
+}
+
+func (v *AvailabilityView) CancelBuyConfirmation() {
+	v.confirming = nil
+}
+
+func (v *AvailabilityView) SetPurchasing() {
+	v.confirming = nil
+	v.purchasing = true
+}
+
+func (v *AvailabilityView) IsPurchasing() bool {
+	return v.purchasing
+}
+
+func (v *AvailabilityView) SetPurchaseResult(r *api.RegistrationResult) {
+	v.purchasing = false
+	v.err = nil
+	if r != nil {
+		v.purchased = fmt.Sprintf("Registered %s — order #%d, balance %s",
+			r.Domain, r.OrderID, centsToDollars(r.BalanceCents))
+	}
+}
+
+func (v *AvailabilityView) SetPurchaseError(err error) {
+	v.purchasing = false
+	v.err = err
+}
+
+func centsToDollars(c int) string {
+	return fmt.Sprintf("$%d.%02d", c/100, c%100)
 }
 
 func (v *AvailabilityView) Focus() tea.Cmd {
@@ -99,6 +172,25 @@ func (v *AvailabilityView) View() string {
 	if v.loading {
 		b.WriteString(styles.SpinnerStyle.Render("  Checking availability..."))
 		b.WriteString("\n")
+	}
+
+	if v.confirming != nil {
+		prompt := fmt.Sprintf("  Buy %s for %s? This will charge your Porkbun account balance.",
+			v.confirming.Domain, centsToDollars(v.pendingCents))
+		b.WriteString(styles.PremiumStyle.Render(prompt))
+		b.WriteString("\n")
+		b.WriteString(styles.HelpStyle.Render("  y confirm · n cancel"))
+		b.WriteString("\n\n")
+	}
+
+	if v.purchasing {
+		b.WriteString(styles.SpinnerStyle.Render("  Purchasing..."))
+		b.WriteString("\n\n")
+	}
+
+	if v.purchased != "" {
+		b.WriteString(styles.SuccessStyle.Render("  " + v.purchased))
+		b.WriteString("\n\n")
 	}
 
 	if v.err != nil {
@@ -152,6 +244,8 @@ func (v *AvailabilityView) HelpText() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		styles.HelpStyle.Render("enter"),
 		" check  ",
+		styles.HelpStyle.Render("ctrl+b"),
+		" buy  ",
 		styles.HelpStyle.Render("esc"),
 		" back  ",
 		styles.HelpStyle.Render("q"),

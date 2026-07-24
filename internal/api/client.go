@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bc/porkbun-tui/internal/config"
@@ -212,6 +214,118 @@ func (c *Client) CheckAvailability(ctx context.Context, domain string) (*Availab
 		Price:     parsed.Response.Price,
 		Premium:   parsed.Response.Premium == "yes",
 	}, nil
+}
+
+type RegistrationResult struct {
+	Domain       string
+	OrderID      int
+	CostCents    int
+	BalanceCents int
+}
+
+type createDomainResponse struct {
+	Status         string `json:"status"`
+	Message        string `json:"message"`
+	Domain         string `json:"domain"`
+	Cost           int    `json:"cost"`
+	CostInCents    int    `json:"costInCents"`
+	OrderID        int    `json:"orderId"`
+	Balance        int    `json:"balance"`
+	BalanceInCents int    `json:"balanceInCents"`
+}
+
+// DollarsToCents converts an API price string like "11.06" to cents. The
+// create endpoint takes the expected cost in cents as a price-confirmation
+// guard, so a parse failure must abort the purchase rather than guess.
+func DollarsToCents(price string) (int, error) {
+	s := strings.TrimSpace(price)
+	if s == "" || strings.HasPrefix(s, "-") {
+		return 0, fmt.Errorf("invalid price %q", price)
+	}
+
+	whole, frac, hasFrac := strings.Cut(s, ".")
+	if whole == "" {
+		return 0, fmt.Errorf("invalid price %q", price)
+	}
+	w, err := strconv.Atoi(whole)
+	if err != nil {
+		return 0, fmt.Errorf("invalid price %q", price)
+	}
+	cents := w * 100
+
+	if hasFrac {
+		if len(frac) < 1 || len(frac) > 2 {
+			return 0, fmt.Errorf("invalid price %q", price)
+		}
+		f, err := strconv.Atoi(frac)
+		if err != nil || f < 0 {
+			return 0, fmt.Errorf("invalid price %q", price)
+		}
+		if len(frac) == 1 {
+			f *= 10
+		}
+		cents += f
+	}
+
+	return cents, nil
+}
+
+// RegisterDomain purchases a domain, charging the account's Porkbun balance.
+// costCents must be the price from a preceding availability check; Porkbun
+// uses it to reject the purchase if the real price differs. Like
+// CheckAvailability, this calls the endpoint directly — the porkbun-go SDK
+// does not expose it.
+func (c *Client) RegisterDomain(ctx context.Context, domain string, costCents int) (*RegistrationResult, error) {
+	body, err := json.Marshal(map[string]any{
+		"apikey":       c.apiKey,
+		"secretapikey": c.secretKey,
+		"cost":         costCents,
+		"agreeToTerms": "yes",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint := fmt.Sprintf("%s/domain/create/%s", c.baseURL, url.PathEscape(domain))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var parsed createDomainResponse
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("porkbun: create returned HTTP %d with an invalid body: %w", resp.StatusCode, err)
+	}
+	if parsed.Status != "SUCCESS" {
+		if parsed.Message != "" {
+			return nil, fmt.Errorf("porkbun: %s", parsed.Message)
+		}
+		return nil, fmt.Errorf("porkbun: create failed (HTTP %d)", resp.StatusCode)
+	}
+
+	result := &RegistrationResult{
+		Domain:       parsed.Domain,
+		OrderID:      parsed.OrderID,
+		CostCents:    parsed.Cost,
+		BalanceCents: parsed.Balance,
+	}
+	if result.Domain == "" {
+		result.Domain = domain
+	}
+	if parsed.CostInCents != 0 {
+		result.CostCents = parsed.CostInCents
+	}
+	if parsed.BalanceInCents != 0 {
+		result.BalanceCents = parsed.BalanceInCents
+	}
+	return result, nil
 }
 
 func (c *Client) GetPricing(ctx context.Context) (map[string]TLDPricing, error) {
