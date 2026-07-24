@@ -120,6 +120,12 @@ func (v *NameserversView) IsSaving() bool {
 	return v.saving
 }
 
+// IsEditing reports whether a text input is focused; the app must not let
+// global key bindings (q, ?) steal printable keys while it is true.
+func (v *NameserversView) IsEditing() bool {
+	return v.mode == NSViewModeEdit
+}
+
 func (v *NameserversView) StartSaving() {
 	v.saving = true
 	v.err = nil

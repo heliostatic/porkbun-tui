@@ -391,6 +391,95 @@ func TestPurchaseErrMsgClearsPurchasingOffView(t *testing.T) {
 	}
 }
 
+func TestTypingQInAvailabilityInputDoesNotQuit(t *testing.T) {
+	a := newTestApp(false)
+	a.view = ViewAvailability
+
+	a, cmd := update(t, a, keyMsg("q"))
+
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatal("typing q into the availability input quit the app")
+		}
+	}
+	if got := a.availabilityView.GetDomain(); got != "q" {
+		t.Errorf("input = %q after typing q, want %q", got, "q")
+	}
+}
+
+func TestTypingHelpKeyInAvailabilityInputDoesNotOpenHelp(t *testing.T) {
+	a := newTestApp(false)
+	a.view = ViewAvailability
+
+	a, _ = update(t, a, keyMsg("?"))
+
+	if a.view != ViewAvailability {
+		t.Errorf("view = %v after typing ?, want ViewAvailability", a.view)
+	}
+}
+
+func TestQDuringBuyConfirmationDoesNotQuit(t *testing.T) {
+	a := buyReadyApp(t)
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+
+	a, cmd := update(t, a, keyMsg("q"))
+
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatal("q during the purchase confirmation quit the app")
+		}
+	}
+	if !a.availabilityView.IsConfirming() {
+		t.Error("q ended the confirmation; it should be swallowed")
+	}
+}
+
+func TestHelpKeyDuringBuyConfirmationIsSwallowed(t *testing.T) {
+	a := buyReadyApp(t)
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+
+	a, _ = update(t, a, keyMsg("?"))
+
+	if a.view != ViewAvailability {
+		t.Errorf("? during confirmation switched view to %v; an armed y/n prompt must not survive a view excursion", a.view)
+	}
+	if !a.availabilityView.IsConfirming() {
+		t.Error("? cancelled the confirmation")
+	}
+}
+
+func TestCtrlCAlwaysQuits(t *testing.T) {
+	a := newTestApp(false)
+	a.view = ViewAvailability
+
+	_, cmd := update(t, a, tea.KeyMsg{Type: tea.KeyCtrlC})
+
+	if cmd == nil {
+		t.Fatal("ctrl+c returned no command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("ctrl+c returned %T, want tea.QuitMsg", cmd())
+	}
+}
+
+func TestTypingQInNameserverEditDoesNotQuit(t *testing.T) {
+	a := newTestApp(false)
+	a.view = ViewNameservers
+	a.nameserversView.SetNameservers([]string{"ns1.example.com"})
+	a, _ = update(t, a, keyMsg("e")) // enter edit mode
+
+	a, cmd := update(t, a, keyMsg("q"))
+
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatal("typing q into a nameserver input quit the app")
+		}
+	}
+	if a.view != ViewNameservers {
+		t.Errorf("view = %v, want ViewNameservers", a.view)
+	}
+}
+
 func TestQuitKeyReturnsQuit(t *testing.T) {
 	a := newTestApp(false)
 	_, cmd := update(t, a, keyMsg("q"))

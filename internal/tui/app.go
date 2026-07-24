@@ -313,14 +313,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
-		// Skip global keys when searching in domains view
-		isSearching := a.view == ViewDomains && a.domainsView.IsSearching()
+		// ctrl+c always quits, even in contexts that capture other keys.
+		if msg.String() == "ctrl+c" {
+			return a, tea.Quit
+		}
+
+		// Views with a focused text input or a modal confirmation own every
+		// printable key: q must be typeable into a domain or nameserver, and
+		// q/? must never quit or leave an armed purchase confirmation.
+		captured := a.viewCapturesKeys()
 
 		// Global keys
 		switch {
 		case key.Matches(msg, keys.Keys.Quit):
-			if isSearching {
-				break // Let search handle it
+			if captured {
+				break // Let the view handle it
 			}
 			if a.view == ViewHelp {
 				a.view = a.prevView
@@ -329,8 +336,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 
 		case key.Matches(msg, keys.Keys.Help):
-			if isSearching {
-				break // Let search handle it
+			if captured {
+				break // Let the view handle it
 			}
 			if a.view == ViewHelp {
 				a.view = a.prevView
@@ -366,6 +373,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return a, tea.Batch(cmds...)
+}
+
+// viewCapturesKeys reports whether the active view owns printable keys
+// (focused text input or modal confirmation), exempting them from the
+// global q/? bindings.
+func (a *App) viewCapturesKeys() bool {
+	switch a.view {
+	case ViewDomains:
+		return a.domainsView.IsSearching()
+	case ViewAvailability:
+		// The domain input is always focused, and the buy confirmation
+		// must swallow everything except y/n/esc.
+		return true
+	case ViewNameservers:
+		return a.nameserversView.IsEditing()
+	}
+	return false
 }
 
 func (a *App) updateDomains(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
