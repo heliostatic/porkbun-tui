@@ -174,7 +174,16 @@ func TestDollarsToCents(t *testing.T) {
 		}
 	}
 
-	invalid := []string{"", "abc", "1.2.3", "-1.00", "-0.50", "1.234", "$2.04", "."}
+	invalid := []string{
+		"", "abc", "1.2.3", "-1.00", "-0.50", "1.234", "$2.04", ".",
+		// A price of zero must never arm a "Buy for $0.00" purchase.
+		"0", "0.0", "0.00",
+		// Sign characters and huge values must error, not wrap or mislead:
+		// Atoi accepts "+5", and unbounded parsing integer-wraps
+		// "184467440737095516.16" to 0 and similar values to negatives.
+		"+5", "1.+5",
+		"184467440737095516.16", "92233720368547759.00", "12345678901234567890.00",
+	}
 	for _, in := range invalid {
 		if got, err := DollarsToCents(in); err == nil {
 			t.Errorf("DollarsToCents(%q) = %d, want error", in, got)

@@ -241,38 +241,46 @@ type createDomainResponse struct {
 
 // DollarsToCents converts an API price string like "11.06" to cents. The
 // create endpoint takes the expected cost in cents as a price-confirmation
-// guard, so a parse failure must abort the purchase rather than guess.
+// guard, so anything questionable must abort the purchase rather than guess:
+// only plain digit strings are accepted (Atoi's "+5" is not), the whole part
+// is bounded well below integer overflow, and a zero price is rejected — a
+// "Buy for $0.00" prompt is never legitimate.
 func DollarsToCents(price string) (int, error) {
 	s := strings.TrimSpace(price)
-	if s == "" || strings.HasPrefix(s, "-") {
-		return 0, fmt.Errorf("invalid price %q", price)
-	}
-
 	whole, frac, hasFrac := strings.Cut(s, ".")
-	if whole == "" {
+
+	// 8 digits caps at $99,999,999 — far above any real domain price and
+	// far below where cents arithmetic could wrap.
+	if whole == "" || len(whole) > 8 || !isASCIIDigits(whole) {
 		return 0, fmt.Errorf("invalid price %q", price)
 	}
-	w, err := strconv.Atoi(whole)
-	if err != nil {
-		return 0, fmt.Errorf("invalid price %q", price)
-	}
+	w, _ := strconv.Atoi(whole)
 	cents := w * 100
 
 	if hasFrac {
-		if len(frac) < 1 || len(frac) > 2 {
+		if len(frac) < 1 || len(frac) > 2 || !isASCIIDigits(frac) {
 			return 0, fmt.Errorf("invalid price %q", price)
 		}
-		f, err := strconv.Atoi(frac)
-		if err != nil || f < 0 {
-			return 0, fmt.Errorf("invalid price %q", price)
-		}
+		f, _ := strconv.Atoi(frac)
 		if len(frac) == 1 {
 			f *= 10
 		}
 		cents += f
 	}
 
+	if cents == 0 {
+		return 0, fmt.Errorf("invalid price %q", price)
+	}
 	return cents, nil
+}
+
+func isASCIIDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // RegisterDomain purchases a domain, charging the account's Porkbun balance.
