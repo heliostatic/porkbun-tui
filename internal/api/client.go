@@ -1,16 +1,25 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/bc/porkbun-tui/internal/config"
 	"github.com/tuzzmaniandevil/porkbun-go"
 )
 
+const defaultBaseURL = "https://api.porkbun.com/api/json/v3"
+
 type Client struct {
-	pb *porkbun.Client
+	pb         *porkbun.Client
+	apiKey     string
+	secretKey  string
+	baseURL    string
+	httpClient *http.Client
 }
 
 type Domain struct {
@@ -55,7 +64,13 @@ func NewClient(cfg *config.Config) *Client {
 		ApiKey:       cfg.APIKey,
 		SecretApiKey: cfg.SecretKey,
 	})
-	return &Client{pb: pb}
+	return &Client{
+		pb:         pb,
+		apiKey:     cfg.APIKey,
+		secretKey:  cfg.SecretKey,
+		baseURL:    defaultBaseURL,
+		httpClient: &http.Client{Timeout: 15 * time.Second},
+	}
 }
 
 func (c *Client) Ping(ctx context.Context) (string, error) {
@@ -139,15 +154,57 @@ func (c *Client) UpdateNameservers(ctx context.Context, domain string, nameserve
 	return err
 }
 
+type checkDomainResponse struct {
+	Status   string `json:"status"`
+	Message  string `json:"message"`
+	Response struct {
+		Avail   string `json:"avail"`
+		Price   string `json:"price"`
+		Premium string `json:"premium"`
+	} `json:"response"`
+}
+
+// CheckAvailability calls Porkbun's checkDomain endpoint directly because the
+// porkbun-go SDK (v1.0.2) does not expose it. Porkbun rate-limits this
+// endpoint to one check per 10 seconds.
 func (c *Client) CheckAvailability(ctx context.Context, domain string) (*AvailabilityResult, error) {
-	// The porkbun-go SDK doesn't seem to have domain availability check
-	// We'll need to make a direct API call or use the pricing endpoint
-	// For now, return a placeholder that indicates this feature needs implementation
+	body, err := json.Marshal(map[string]string{
+		"apikey":       c.apiKey,
+		"secretapikey": c.secretKey,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s/domain/checkDomain/%s", c.baseURL, domain)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var parsed checkDomainResponse
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("decoding checkDomain response: %w", err)
+	}
+	if parsed.Status != "SUCCESS" {
+		if parsed.Message != "" {
+			return nil, fmt.Errorf("porkbun: %s", parsed.Message)
+		}
+		return nil, fmt.Errorf("porkbun: checkDomain failed (HTTP %d)", resp.StatusCode)
+	}
+
 	return &AvailabilityResult{
 		Domain:    domain,
-		Available: false,
-		Price:     "Feature not yet implemented in SDK",
-		Premium:   false,
+		Available: parsed.Response.Avail == "yes",
+		Price:     parsed.Response.Price,
+		Premium:   parsed.Response.Premium == "yes",
 	}, nil
 }
 
