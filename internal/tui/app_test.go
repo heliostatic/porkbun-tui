@@ -2,11 +2,14 @@ package tui
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/bc/porkbun-tui/internal/api"
+	"github.com/bc/porkbun-tui/internal/config"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -502,6 +505,83 @@ func TestTypingQInNameserverEditDoesNotQuit(t *testing.T) {
 	}
 	if a.view != ViewNameservers {
 		t.Errorf("view = %v, want ViewNameservers", a.view)
+	}
+}
+
+// serverBackedApp builds an app whose client talks to a local test server,
+// so tests can execute the tea.Cmd closures and cover their error routing.
+func serverBackedApp(t *testing.T, handler http.HandlerFunc) *App {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	client := api.NewClientWithBaseURL(&config.Config{APIKey: "pk1_t", SecretKey: "sk1_t"}, server.URL)
+	a := NewApp(client, nil, nil, nil, false)
+	a.view = ViewAvailability
+	return a
+}
+
+func TestPurchaseCommandRoutesSuccess(t *testing.T) {
+	a := serverBackedApp(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"SUCCESS","domain":"fresh.xyz","cost":204,"orderId":7,"balance":100}`))
+	})
+	a, _ = update(t, a, availabilityResultMsg{&api.AvailabilityResult{Domain: "fresh.xyz", Available: true, Price: "2.04"}})
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+	_, cmd := update(t, a, keyMsg("y"))
+	if cmd == nil {
+		t.Fatal("no purchase command queued")
+	}
+
+	msg := cmd() // execute the real closure against the test server
+
+	result, ok := msg.(purchaseResultMsg)
+	if !ok {
+		t.Fatalf("purchase command returned %T, want purchaseResultMsg", msg)
+	}
+	if result.result.OrderID != 7 {
+		t.Errorf("OrderID = %d, want 7", result.result.OrderID)
+	}
+}
+
+func TestPurchaseCommandRoutesError(t *testing.T) {
+	a := serverBackedApp(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"status":"ERROR","message":"Insufficient funds."}`))
+	})
+	a, _ = update(t, a, availabilityResultMsg{&api.AvailabilityResult{Domain: "fresh.xyz", Available: true, Price: "2.04"}})
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+	_, cmd := update(t, a, keyMsg("y"))
+	if cmd == nil {
+		t.Fatal("no purchase command queued")
+	}
+
+	msg := cmd()
+
+	errResult, ok := msg.(purchaseErrMsg)
+	if !ok {
+		t.Fatalf("failed purchase returned %T, want purchaseErrMsg — a swallowed money-path error", msg)
+	}
+	if !strings.Contains(errResult.err.Error(), "Insufficient funds") {
+		t.Errorf("error %q missing API message", errResult.err)
+	}
+}
+
+func TestCheckCommandRoutesError(t *testing.T) {
+	a := serverBackedApp(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"status":"ERROR","message":"Invalid API key."}`))
+	})
+	for _, r := range "x.com" {
+		a, _ = update(t, a, keyMsg(string(r)))
+	}
+	_, cmd := update(t, a, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("no check command queued")
+	}
+
+	msg := cmd()
+
+	if _, ok := msg.(availabilityErrMsg); !ok {
+		t.Fatalf("failed check returned %T, want availabilityErrMsg", msg)
 	}
 }
 

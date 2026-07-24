@@ -221,6 +221,14 @@ func (c *Client) CheckAvailability(ctx context.Context, domain string) (*Availab
 	}, nil
 }
 
+// NewClientWithBaseURL is NewClient with the API base URL overridden — for
+// tests that point the client at a local server.
+func NewClientWithBaseURL(cfg *config.Config, baseURL string) *Client {
+	c := NewClient(cfg)
+	c.baseURL = baseURL
+	return c
+}
+
 type RegistrationResult struct {
 	Domain       string
 	OrderID      int

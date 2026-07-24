@@ -216,10 +216,23 @@ func TestAvailabilityViewRendersConfirmationPrompt(t *testing.T) {
 	v.StartBuyConfirmation()
 
 	out := v.View()
-	for _, want := range []string{"fresh.xyz", "$2.04", "balance", "y", "n"} {
+	// Full hint strings, not bare letters — "y"/"n" alone match unrelated
+	// words anywhere in the view (mutation-verified vacuous).
+	for _, want := range []string{"fresh.xyz", "$2.04", "balance", "y confirm", "n cancel"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("confirmation prompt missing %q", want)
 		}
+	}
+}
+
+func TestAvailabilityViewRendersPurchasingSpinner(t *testing.T) {
+	v := NewAvailabilityView()
+	v.SetResult(&api.AvailabilityResult{Domain: "fresh.xyz", Available: true, Price: "2.04"})
+	v.StartBuyConfirmation()
+	v.SetPurchasing()
+
+	if !strings.Contains(v.View(), "Purchasing") {
+		t.Error("no feedback rendered while a charge is in flight")
 	}
 }
 
@@ -292,8 +305,14 @@ func TestAvailabilityNewCheckClearsPurchaseMessage(t *testing.T) {
 func TestAvailabilityHelpTextMentionsBuy(t *testing.T) {
 	v := NewAvailabilityView()
 
-	if !strings.Contains(v.HelpText(), "buy") {
+	help := v.HelpText()
+	if !strings.Contains(help, "buy") {
 		t.Error("help text does not document the buy key")
+	}
+	// Pin the actual keybinding, not just the word: the bar must advertise
+	// the key the app really handles.
+	if !strings.Contains(help, "ctrl+b") {
+		t.Error("help text does not name ctrl+b as the buy key")
 	}
 }
 
