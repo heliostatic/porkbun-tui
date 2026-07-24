@@ -83,7 +83,10 @@ func (v *AvailabilityView) IsLoading() bool {
 // latest is taken, or a purchase is already in flight) and surfaces an
 // error when the price cannot be converted to cents.
 func (v *AvailabilityView) StartBuyConfirmation() {
-	if v.purchasing || v.confirming != nil || len(v.results) == 0 {
+	// The loading guard prevents arming for the PREVIOUS result while a new
+	// check is in flight — with the 10s check rate limit that window is long
+	// enough for a fast enter→ctrl+b→y to buy the wrong domain.
+	if v.purchasing || v.loading || v.confirming != nil || len(v.results) == 0 {
 		return
 	}
 	latest := v.results[0]
@@ -131,6 +134,13 @@ func (v *AvailabilityView) SetPurchaseResult(r *api.RegistrationResult) {
 	if r != nil {
 		v.purchased = fmt.Sprintf("Registered %s — order #%d, balance %s",
 			r.Domain, r.OrderID, centsToDollars(r.BalanceCents))
+		// The domain is ours now; flip its stale AVAILABLE rows so ctrl+b
+		// cannot re-arm a purchase for it.
+		for i := range v.results {
+			if v.results[i].Domain == r.Domain {
+				v.results[i].Available = false
+			}
+		}
 	}
 }
 

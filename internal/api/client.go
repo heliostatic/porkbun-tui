@@ -23,6 +23,10 @@ type Client struct {
 	secretKey  string
 	baseURL    string
 	httpClient *http.Client
+	// purchaseClient gets a longer timeout: registration is slow, and a
+	// premature client timeout leaves the user unsure whether they were
+	// charged. Falls back to httpClient when nil (tests).
+	purchaseClient *http.Client
 }
 
 type Domain struct {
@@ -68,11 +72,12 @@ func NewClient(cfg *config.Config) *Client {
 		SecretApiKey: cfg.SecretKey,
 	})
 	return &Client{
-		pb:         pb,
-		apiKey:     cfg.APIKey,
-		secretKey:  cfg.SecretKey,
-		baseURL:    defaultBaseURL,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		pb:             pb,
+		apiKey:         cfg.APIKey,
+		secretKey:      cfg.SecretKey,
+		baseURL:        defaultBaseURL,
+		httpClient:     &http.Client{Timeout: 15 * time.Second},
+		purchaseClient: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -293,9 +298,15 @@ func (c *Client) RegisterDomain(ctx context.Context, domain string, costCents in
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	httpClient := c.httpClient
+	if c.purchaseClient != nil {
+		httpClient = c.purchaseClient
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		// The request may have reached Porkbun before the failure; a timeout
+		// here does not mean the account was not charged.
+		return nil, fmt.Errorf("porkbun: create request failed — the purchase may still have completed, check your Porkbun account before retrying: %w", err)
 	}
 	defer resp.Body.Close()
 

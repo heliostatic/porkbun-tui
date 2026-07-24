@@ -287,6 +287,22 @@ func TestRegisterDomainAPIError(t *testing.T) {
 	}
 }
 
+func TestRegisterDomainTransportErrorWarnsPurchaseMayHaveCompleted(t *testing.T) {
+	// A timeout or connection failure does NOT mean the charge didn't go
+	// through server-side; the error must warn before the user retries.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	server.Close() // connection refused
+
+	c := newTestClient(server.URL)
+	_, err := c.RegisterDomain(context.Background(), "example.com", 868)
+	if err == nil {
+		t.Fatal("RegisterDomain returned nil error, want error")
+	}
+	if !strings.Contains(err.Error(), "may still have completed") {
+		t.Errorf("transport error %q does not warn that the purchase may have completed", err)
+	}
+}
+
 func TestRegisterDomainNonJSONErrorIncludesHTTPStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)

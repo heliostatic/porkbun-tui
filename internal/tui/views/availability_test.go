@@ -168,6 +168,35 @@ func TestAvailabilityBuyConfirmationRejectsUnparsablePrice(t *testing.T) {
 	}
 }
 
+func TestAvailabilityBuyConfirmationRefusedWhileCheckInFlight(t *testing.T) {
+	v := NewAvailabilityView()
+	v.SetResult(&api.AvailabilityResult{Domain: "previous.com", Available: true, Price: "9.00"})
+	v.SetLoading(true) // a new check is in flight
+
+	v.StartBuyConfirmation()
+
+	if v.IsConfirming() {
+		t.Error("confirmation armed for the previous result while a new check is in flight")
+	}
+}
+
+func TestAvailabilityBuyConfirmationRefusedForJustPurchasedDomain(t *testing.T) {
+	v := NewAvailabilityView()
+	v.SetResult(&api.AvailabilityResult{Domain: "bought.com", Available: true, Price: "9.00"})
+	v.StartBuyConfirmation()
+	v.SetPurchasing()
+	v.SetPurchaseResult(&api.RegistrationResult{Domain: "bought.com", OrderID: 1, CostCents: 900, BalanceCents: 100})
+
+	v.StartBuyConfirmation()
+
+	if v.IsConfirming() {
+		t.Error("confirmation re-armed for a domain that was just purchased")
+	}
+	if !strings.Contains(v.View(), "TAKEN") {
+		t.Error("purchased domain still rendered as AVAILABLE")
+	}
+}
+
 func TestAvailabilityBuyConfirmationRefusedWhilePurchasing(t *testing.T) {
 	v := NewAvailabilityView()
 	v.SetResult(&api.AvailabilityResult{Domain: "fresh.xyz", Available: true, Price: "2.04"})

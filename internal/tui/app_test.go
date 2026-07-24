@@ -391,6 +391,24 @@ func TestPurchaseErrMsgClearsPurchasingOffView(t *testing.T) {
 	}
 }
 
+func TestAvailabilityEnterDoesNotCheckWhilePurchasing(t *testing.T) {
+	a := buyReadyApp(t)
+	a, _ = update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+	a, _ = update(t, a, keyMsg("y")) // purchase in flight
+
+	for _, r := range "bar.com" {
+		a, _ = update(t, a, keyMsg(string(r)))
+	}
+	a, cmd := update(t, a, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if a.availabilityView.IsLoading() {
+		t.Error("a check started while a purchase is in flight; its result would wipe the receipt")
+	}
+	if cmd != nil {
+		t.Error("enter queued a command while purchasing")
+	}
+}
+
 func TestTypingQInAvailabilityInputDoesNotQuit(t *testing.T) {
 	a := newTestApp(false)
 	a.view = ViewAvailability

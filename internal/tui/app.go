@@ -559,7 +559,9 @@ func (a *App) updateAvailability(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	if key.Matches(msg, keys.Keys.Enter) && !a.availabilityView.IsLoading() {
+	// No new check while a purchase is in flight: its result arriving would
+	// wipe the one-time purchase receipt.
+	if key.Matches(msg, keys.Keys.Enter) && !a.availabilityView.IsLoading() && !a.availabilityView.IsPurchasing() {
 		domain := a.availabilityView.GetDomain()
 		if domain != "" {
 			a.availabilityView.SetLoading(true)
