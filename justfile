@@ -26,7 +26,7 @@ bootstrap:
     fi
     echo "==> Verifying build and tests"
     go build ./...
-    go test ./... >/dev/null
+    go test ./...
     echo ""
     echo "Ready. Set PORKBUN_API_KEY / PORKBUN_SECRET_KEY (see 'just check-creds'),"
     echo "then run 'just run' — or 'just demo' to try it without credentials."
@@ -68,17 +68,18 @@ test-race:
 vet:
     go vet ./...
 
-# CI-style gate: formatting, vet, race tests
-check:
+# Fail if any files need gofmt
+fmt-check:
     #!/usr/bin/env bash
     set -euo pipefail
     unformatted=$(gofmt -l .)
     if [ -n "$unformatted" ]; then
         echo "gofmt needed on:"; echo "$unformatted"; exit 1
     fi
-    go vet ./...
-    go test -race -count=1 ./...
-    echo "check passed"
+
+# CI-style gate: formatting, vet, race tests
+check: fmt-check vet test-race
+    @echo "check passed"
 
 # Run tests with coverage
 test-coverage:
