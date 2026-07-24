@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/bc/porkbun-tui/internal/config"
@@ -176,8 +177,8 @@ func (c *Client) CheckAvailability(ctx context.Context, domain string) (*Availab
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/domain/checkDomain/%s", c.baseURL, domain)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	endpoint := fmt.Sprintf("%s/domain/checkDomain/%s", c.baseURL, url.PathEscape(domain))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -191,13 +192,18 @@ func (c *Client) CheckAvailability(ctx context.Context, domain string) (*Availab
 
 	var parsed checkDomainResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("decoding checkDomain response: %w", err)
+		return nil, fmt.Errorf("porkbun: checkDomain returned HTTP %d with an invalid body: %w", resp.StatusCode, err)
 	}
 	if parsed.Status != "SUCCESS" {
 		if parsed.Message != "" {
 			return nil, fmt.Errorf("porkbun: %s", parsed.Message)
 		}
 		return nil, fmt.Errorf("porkbun: checkDomain failed (HTTP %d)", resp.StatusCode)
+	}
+	// A SUCCESS body without an avail field means the response shape drifted
+	// or a different handler answered; guessing "taken" would be silently wrong.
+	if parsed.Response.Avail != "yes" && parsed.Response.Avail != "no" {
+		return nil, fmt.Errorf("porkbun: checkDomain response missing availability status")
 	}
 
 	return &AvailabilityResult{
