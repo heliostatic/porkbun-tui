@@ -31,7 +31,7 @@ A terminal UI for managing your [Porkbun](https://porkbun.com) domains.
 - **Nameservers** - View and edit nameservers with presets (Cloudflare, Google, etc.)
 - **TLD Breakdown** - See domains grouped by TLD with renewal costs
 - **Calendar View** - See domains grouped by expiration month
-- **Domain Availability** - Check if a domain is available for registration
+- **Domain Availability** - Check if a domain is available for registration, with pricing (Porkbun rate-limits checks to one per 10 seconds)
 - **Offline-First** - Cached data loads instantly, refreshes in background
 
 ## Installation
@@ -68,6 +68,12 @@ Create `~/.config/porkbun-tui/config.yaml`:
 ```yaml
 api_key: pk1_xxx
 secret_key: sk1_xxx
+```
+
+Since this file contains your API credentials, restrict its permissions:
+
+```bash
+chmod 600 ~/.config/porkbun-tui/config.yaml
 ```
 
 ## Usage
