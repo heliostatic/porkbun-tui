@@ -4,6 +4,33 @@
 default:
     @just --list
 
+# One-time setup: verify Go, fetch deps, install dev tools, prove the build
+bootstrap:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v go >/dev/null 2>&1 || { echo "Error: Go 1.21+ is required — https://go.dev/dl/"; exit 1; }
+    echo "==> Downloading module dependencies"
+    go mod download
+    echo "==> Installing gofumpt (used by 'just fmt')"
+    go install mvdan.cc/gofumpt@latest
+    if ! command -v golangci-lint >/dev/null 2>&1; then
+        if command -v brew >/dev/null 2>&1; then
+            echo "==> Installing golangci-lint (used by 'just lint')"
+            brew install golangci-lint
+        else
+            echo "Note: golangci-lint not found — install it for 'just lint': https://golangci-lint.run/usage/install/"
+        fi
+    fi
+    if ! command -v vhs >/dev/null 2>&1; then
+        echo "Note: vhs not installed (only needed for 'just screenshots') — brew install vhs"
+    fi
+    echo "==> Verifying build and tests"
+    go build ./...
+    go test ./... >/dev/null
+    echo ""
+    echo "Ready. Set PORKBUN_API_KEY / PORKBUN_SECRET_KEY (see 'just check-creds'),"
+    echo "then run 'just run' — or 'just demo' to try it without credentials."
+
 # Build the binary with version from git
 build:
     go build -ldflags="-X main.version=0.0.1-$(git rev-parse --short=8 HEAD 2>/dev/null || echo unknown)" -o porkbun-tui ./cmd/porkbun-tui
@@ -20,6 +47,10 @@ run: build
 dev:
     go run ./cmd/porkbun-tui
 
+# Run in demo mode (no credentials needed)
+demo:
+    go run ./cmd/porkbun-tui --demo
+
 # Clean build artifacts
 clean:
     rm -f porkbun-tui
@@ -28,6 +59,26 @@ clean:
 # Run tests
 test:
     go test -v ./...
+
+# Run tests with the race detector, uncached
+test-race:
+    go test -race -count=1 ./...
+
+# Vet for suspicious constructs
+vet:
+    go vet ./...
+
+# CI-style gate: formatting, vet, race tests
+check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    unformatted=$(gofmt -l .)
+    if [ -n "$unformatted" ]; then
+        echo "gofmt needed on:"; echo "$unformatted"; exit 1
+    fi
+    go vet ./...
+    go test -race -count=1 ./...
+    echo "check passed"
 
 # Run tests with coverage
 test-coverage:
