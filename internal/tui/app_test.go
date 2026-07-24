@@ -183,12 +183,56 @@ func TestViewSwitchingKeys(t *testing.T) {
 	}
 }
 
+func TestDemoModeAllowsAvailabilityWithCannedChecks(t *testing.T) {
+	a := NewApp(nil, nil, []api.Domain{{Name: "example.com", TLD: "com"}}, nil, true)
+
+	a, _ = update(t, a, keyMsg("a"))
+	if a.view != ViewAvailability {
+		t.Fatalf("view = %v after a in demo mode, want ViewAvailability", a.view)
+	}
+
+	for _, r := range "coolstartup.dev" {
+		a, _ = update(t, a, keyMsg(string(r)))
+	}
+	a, cmd := update(t, a, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("no check command queued in demo mode")
+	}
+
+	msg := cmd() // must be canned data, not a nil-client API call
+	result, ok := msg.(availabilityResultMsg)
+	if !ok {
+		t.Fatalf("demo check returned %T, want availabilityResultMsg", msg)
+	}
+	if result.result.Domain != "coolstartup.dev" {
+		t.Errorf("result.Domain = %q, want coolstartup.dev", result.result.Domain)
+	}
+}
+
+func TestDemoModeBlocksPurchase(t *testing.T) {
+	a := NewApp(nil, nil, nil, nil, true)
+	a.view = ViewAvailability
+	a, _ = update(t, a, availabilityResultMsg{&api.AvailabilityResult{
+		Domain: "coolstartup.dev", Available: true, Price: "14.00",
+	}})
+
+	a, cmd := update(t, a, tea.KeyMsg{Type: tea.KeyCtrlB})
+
+	if a.availabilityView.IsConfirming() {
+		t.Fatal("purchase confirmation armed in demo mode; y would call the nil client")
+	}
+	if cmd != nil {
+		t.Error("ctrl+b queued a command in demo mode")
+	}
+}
+
 func TestDemoModeBlocksAPIDependentViews(t *testing.T) {
 	// Domains must be loaded so SelectedDomain() is non-nil: without one the
 	// d/n handlers bail out on their own and the guard assertions are vacuous.
+	// The availability view is demo-allowed (canned checks), so a is absent.
 	domains := []api.Domain{{Name: "example.com", TLD: "com"}}
 
-	for _, k := range []string{"a", "d", "n", "r"} {
+	for _, k := range []string{"d", "n", "r"} {
 		a := NewApp(nil, nil, domains, nil, true)
 		a2, cmd := update(t, a, keyMsg(k))
 		if a2.view != ViewDomains {

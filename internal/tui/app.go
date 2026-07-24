@@ -6,6 +6,7 @@ import (
 
 	"github.com/bc/porkbun-tui/internal/api"
 	"github.com/bc/porkbun-tui/internal/cache"
+	"github.com/bc/porkbun-tui/internal/demo"
 	"github.com/bc/porkbun-tui/internal/keys"
 	"github.com/bc/porkbun-tui/internal/styles"
 	"github.com/bc/porkbun-tui/internal/tui/views"
@@ -219,6 +220,11 @@ func (a *App) saveNameservers(domain string, ns []string) tea.Cmd {
 }
 
 func (a *App) checkAvailability(domain string) tea.Cmd {
+	if a.demoMode {
+		return func() tea.Msg {
+			return availabilityResultMsg{demo.CheckAvailability(domain)}
+		}
+	}
 	return func() tea.Msg {
 		result, err := a.client.CheckAvailability(context.Background(), domain)
 		if err != nil {
@@ -438,9 +444,7 @@ func (a *App) updateDomains(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 
 		case key.Matches(msg, keys.Keys.Avail):
-			if a.demoMode {
-				return a, nil // No availability check in demo mode
-			}
+			// Allowed in demo mode: checks return canned demo results.
 			a.view = ViewAvailability
 			return a, a.availabilityView.Focus()
 
@@ -556,6 +560,9 @@ func (a *App) updateAvailability(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.String() == "ctrl+b" {
+		if a.demoMode {
+			return a, nil // No purchases in demo mode; y would hit the nil client
+		}
 		a.availabilityView.StartBuyConfirmation()
 		return a, nil
 	}

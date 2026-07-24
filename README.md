@@ -21,6 +21,9 @@ A terminal UI for managing your [Porkbun](https://porkbun.com) domains.
 ### Calendar View
 ![Calendar View](screenshots/calendar-list-view.png)
 
+### Availability Checker
+![Availability Checker](screenshots/availability-view.png)
+
 </details>
 
 ## Features

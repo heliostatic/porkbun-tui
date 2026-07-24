@@ -1,6 +1,7 @@
 package demo
 
 import (
+	"strings"
 	"time"
 
 	"github.com/bc/porkbun-tui/internal/api"
@@ -22,7 +23,34 @@ func Domains() []api.Domain {
 		{Name: "cryptotrader.xyz", TLD: "xyz", CreateDate: now.AddDate(-3, 0, 0), ExpireDate: now.AddDate(0, 0, 15), AutoRenew: false, Status: "ACTIVE", SecurityLock: false, WhoisPrivacy: true},
 		{Name: "mailservice.email", TLD: "email", CreateDate: now.AddDate(-1, -5, 0), ExpireDate: now.AddDate(0, 7, 0), AutoRenew: true, Status: "ACTIVE", SecurityLock: true, WhoisPrivacy: true},
 		{Name: "aistartup.ai", TLD: "ai", CreateDate: now.AddDate(0, -9, 0), ExpireDate: now.AddDate(0, 2, 15), AutoRenew: true, Status: "ACTIVE", SecurityLock: true, WhoisPrivacy: true},
+		// Near-expiry entries so the Days column shows its full color range.
+		{Name: "legacyforum.net", TLD: "net", CreateDate: now.AddDate(-8, 0, 0), ExpireDate: now.AddDate(0, 0, 3), AutoRenew: false, Status: "ACTIVE", SecurityLock: false, WhoisPrivacy: false},
+		{Name: "sidehustle.store", TLD: "store", CreateDate: now.AddDate(-1, 0, 0), ExpireDate: now.AddDate(0, 0, 25), AutoRenew: false, Status: "ACTIVE", SecurityLock: false, WhoisPrivacy: true},
 	}
+}
+
+// takenNames read as registered in demo mode so checks show both outcomes.
+var takenNames = map[string]bool{
+	"google": true, "porkbun": true, "github": true, "apple": true,
+	"amazon": true, "example": true,
+}
+
+// CheckAvailability returns a deterministic canned result for demo mode:
+// famous or short names are taken, everything else is available at the demo
+// pricing table's registration price.
+func CheckAvailability(domain string) *api.AvailabilityResult {
+	d := strings.ToLower(strings.TrimSpace(domain))
+	name, tld, _ := strings.Cut(d, ".")
+
+	if takenNames[name] || len(name) <= 4 {
+		return &api.AvailabilityResult{Domain: d, Available: false}
+	}
+
+	price := "12.99"
+	if p, ok := Pricing()[tld]; ok {
+		price = p.Registration
+	}
+	return &api.AvailabilityResult{Domain: d, Available: true, Price: price}
 }
 
 // Pricing returns sample TLD pricing data for demo mode
