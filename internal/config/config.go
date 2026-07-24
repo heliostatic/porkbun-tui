@@ -49,21 +49,17 @@ func Load() (*Config, error) {
 }
 
 func getConfigPath() string {
-	// Check XDG_CONFIG_HOME first
-	if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); xdgConfig != "" {
-		path := filepath.Join(xdgConfig, "porkbun-tui", "config.yaml")
-		if _, err := os.Stat(path); err == nil {
-			return path
+	// Per the XDG spec, XDG_CONFIG_HOME replaces ~/.config entirely when set
+	configHome := os.Getenv("XDG_CONFIG_HOME")
+	if configHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
 		}
+		configHome = filepath.Join(home, ".config")
 	}
 
-	// Fall back to ~/.config
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-
-	path := filepath.Join(home, ".config", "porkbun-tui", "config.yaml")
+	path := filepath.Join(configHome, "porkbun-tui", "config.yaml")
 	if _, err := os.Stat(path); err == nil {
 		return path
 	}
