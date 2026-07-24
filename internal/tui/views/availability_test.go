@@ -49,7 +49,7 @@ func TestAvailabilityViewRendersStatuses(t *testing.T) {
 	rows := map[string][]string{
 		"taken.com": {"TAKEN"},
 		"open.com":  {"AVAILABLE", "11.06"},
-		"fancy.com": {"AVAILABLE", "1200.00", "(premium)"},
+		"fancy.com": {"AVAILABLE", "1200.00", "premium"},
 	}
 	for _, line := range strings.Split(v.View(), "\n") {
 		for domain, wants := range rows {
@@ -66,6 +66,39 @@ func TestAvailabilityViewRendersStatuses(t *testing.T) {
 	}
 	for domain := range rows {
 		t.Errorf("View() has no row for %s", domain)
+	}
+}
+
+func TestAvailabilityViewInputHasNoBorderArtifacts(t *testing.T) {
+	v := NewAvailabilityView()
+
+	// The SearchStyle rounded border renders with artifacts around the
+	// textinput (same defect previously fixed in the nameserver view).
+	if strings.Contains(v.View(), "╭") {
+		t.Error("View() wraps the input in a border, which renders broken")
+	}
+}
+
+func TestAvailabilityViewShowsFullPlaceholder(t *testing.T) {
+	v := NewAvailabilityView()
+
+	// bubbles renders only Width+1 placeholder runes; with Width unset the
+	// "example.com" placeholder collapses to "> e".
+	if !strings.Contains(v.View(), "example.com") {
+		t.Error("View() does not show the full placeholder")
+	}
+}
+
+func TestAvailabilityViewRendersPriceColumn(t *testing.T) {
+	v := NewAvailabilityView()
+	v.SetResult(&api.AvailabilityResult{Domain: "open.com", Available: true, Price: "2.04"})
+
+	out := v.View()
+	if !strings.Contains(out, "Price/yr") {
+		t.Error("View() missing the Price/yr column header")
+	}
+	if !strings.Contains(out, "$") {
+		t.Error("View() renders the price without a currency symbol")
 	}
 }
 

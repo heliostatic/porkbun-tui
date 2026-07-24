@@ -195,6 +195,14 @@ func TestDomainsView_ViewShowsFilterHintWhenNoMatches(t *testing.T) {
 	}
 }
 
+func TestDomainsView_HelpTextDocumentsAvailability(t *testing.T) {
+	v := NewDomainsView()
+
+	if !strings.Contains(v.HelpText(), "avail") {
+		t.Error("quick help bar does not mention the availability checker (a)")
+	}
+}
+
 func TestDomainsView_SelectedDomain(t *testing.T) {
 	v := NewDomainsView()
 

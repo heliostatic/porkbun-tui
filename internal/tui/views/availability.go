@@ -24,6 +24,7 @@ func NewAvailabilityView() *AvailabilityView {
 	ti := textinput.New()
 	ti.Placeholder = "example.com"
 	ti.CharLimit = 100
+	ti.Width = 30 // bubbles renders only Width+1 placeholder runes
 	ti.Focus()
 
 	return &AvailabilityView{
@@ -88,10 +89,11 @@ func (v *AvailabilityView) View() string {
 	b.WriteString(title)
 	b.WriteString("\n\n")
 
-	// Input
+	// Input; rendered bare — the SearchStyle border produces visual
+	// artifacts (same defect previously fixed in the nameserver view).
 	b.WriteString("  Enter domain to check:\n\n")
 	b.WriteString("  ")
-	b.WriteString(styles.SearchStyle.Render(v.input.View()))
+	b.WriteString(v.input.View())
 	b.WriteString("\n\n")
 
 	if v.loading {
@@ -106,7 +108,12 @@ func (v *AvailabilityView) View() string {
 
 	// Results
 	if len(v.results) > 0 {
+		const domainWidth = 34
+
 		b.WriteString("  Recent checks:\n\n")
+		header := fmt.Sprintf("  %-*s  %-9s  %9s", domainWidth, "Domain", "Status", "Price/yr")
+		b.WriteString(styles.TableHeaderStyle.Render(header))
+		b.WriteString("\n")
 
 		for _, r := range v.results {
 			var status string
@@ -120,13 +127,18 @@ func (v *AvailabilityView) View() string {
 				style = styles.ErrorStyle
 			}
 
-			row := fmt.Sprintf("  %-30s  %s", r.Domain, style.Render(status))
+			price := ""
 			if r.Available && r.Price != "" {
-				priceStr := r.Price
-				if r.Premium {
-					priceStr += " (premium)"
-				}
-				row += fmt.Sprintf("  %s", styles.HelpStyle.Render(priceStr))
+				price = fmt.Sprintf("$%8s", r.Price)
+			}
+
+			row := fmt.Sprintf("  %-*s  %s  %s",
+				domainWidth, truncate(r.Domain, domainWidth),
+				style.Render(fmt.Sprintf("%-9s", status)),
+				price,
+			)
+			if r.Premium {
+				row += styles.PremiumStyle.Render("  premium")
 			}
 			b.WriteString(row)
 			b.WriteString("\n")

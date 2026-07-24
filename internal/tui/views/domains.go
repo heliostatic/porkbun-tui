@@ -339,6 +339,8 @@ func (v *DomainsView) HelpText() string {
 		" dns  ",
 		styles.HelpStyle.Render("n"),
 		" ns  ",
+		styles.HelpStyle.Render("a"),
+		" avail  ",
 		styles.HelpStyle.Render("t"),
 		" tld  ",
 		styles.HelpStyle.Render("c"),

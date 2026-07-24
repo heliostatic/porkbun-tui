@@ -69,6 +69,10 @@ var (
 			Foreground(ColorRed).
 			Bold(true)
 
+	// Premium domain marker
+	PremiumStyle = lipgloss.NewStyle().
+			Foreground(ColorYellow)
+
 	// Success style
 	SuccessStyle = lipgloss.NewStyle().
 			Foreground(ColorGreen)
