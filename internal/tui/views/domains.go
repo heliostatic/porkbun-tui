@@ -67,19 +67,27 @@ func (v *DomainsView) applyFilter() {
 	query := strings.ToLower(v.searchInput.Value())
 	if query == "" {
 		v.filtered = v.domains
-		return
-	}
-
-	v.filtered = nil
-	for _, d := range v.domains {
-		if strings.Contains(strings.ToLower(d.Name), query) {
-			v.filtered = append(v.filtered, d)
+	} else {
+		v.filtered = nil
+		for _, d := range v.domains {
+			if strings.Contains(strings.ToLower(d.Name), query) {
+				v.filtered = append(v.filtered, d)
+			}
 		}
 	}
+	v.clampScroll()
+}
 
-	// Reset cursor if out of bounds
+// clampScroll keeps cursor and offset inside the filtered list whenever it
+// changes size — filtering while scrolled down, or a refresh shrinking the
+// list, otherwise leaves a stale offset that renders zero rows and a stale
+// cursor with a dead selection.
+func (v *DomainsView) clampScroll() {
 	if v.cursor >= len(v.filtered) {
 		v.cursor = max(0, len(v.filtered)-1)
+	}
+	if v.offset > v.cursor {
+		v.offset = v.cursor
 	}
 }
 

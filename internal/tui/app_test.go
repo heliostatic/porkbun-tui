@@ -93,6 +93,17 @@ func TestErrMsgSetsAppErrorAndClearsLoading(t *testing.T) {
 	}
 }
 
+func TestSuccessfulLoadClearsStickyError(t *testing.T) {
+	a := newTestApp(false)
+	a, _ = update(t, a, errMsg{errors.New("transient failure")})
+
+	a, _ = update(t, a, domainsLoadedMsg{[]api.Domain{{Name: "example.com"}}})
+
+	if a.err != nil {
+		t.Errorf("a.err = %v after a successful load; the error banner is sticky for the whole session", a.err)
+	}
+}
+
 func TestAvailabilityErrorClearsLoadingAfterLeavingView(t *testing.T) {
 	a := newTestApp(false)
 	a.view = ViewAvailability

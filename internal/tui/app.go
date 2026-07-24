@@ -262,6 +262,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case domainsLoadedMsg:
 		a.loading = false
 		a.refreshing = false
+		a.err = nil // a successful load supersedes any earlier error banner
 		a.domainsView.SetDomains(msg.domains)
 		a.tldView.SetData(msg.domains, a.pricing)
 		a.calendarView.SetDomains(msg.domains)
