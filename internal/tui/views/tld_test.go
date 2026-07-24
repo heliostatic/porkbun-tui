@@ -62,10 +62,10 @@ func TestTLDView_SetData_SortedByTotalCost(t *testing.T) {
 	v := NewTLDView()
 
 	domains := []api.Domain{
-		{Name: "a.com", TLD: "com"},     // 1 domain * $10 = $10
-		{Name: "b.io", TLD: "io"},       // 1 domain * $30 = $30
-		{Name: "c.io", TLD: "io"},       // total io = $60
-		{Name: "d.dev", TLD: "dev"},     // 1 domain * $15 = $15
+		{Name: "a.com", TLD: "com"}, // 1 domain * $10 = $10
+		{Name: "b.io", TLD: "io"},   // 1 domain * $30 = $30
+		{Name: "c.io", TLD: "io"},   // total io = $60
+		{Name: "d.dev", TLD: "dev"}, // 1 domain * $15 = $15
 	}
 
 	pricing := map[string]api.TLDPricing{
