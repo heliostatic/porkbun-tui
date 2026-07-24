@@ -201,17 +201,11 @@ func (v *DomainsView) Update(msg tea.Msg) (*DomainsView, tea.Cmd) {
 }
 
 func (v *DomainsView) View() string {
-	if len(v.filtered) == 0 {
-		if v.searchInput.Value() != "" {
-			return "\n  No domains match your search."
-		}
-		return "\n  No domains found."
-	}
-
 	var b strings.Builder
 	b.WriteString("\n")
 
-	// Search bar if searching or filter active
+	// Search bar if searching or filter active; must render even with zero
+	// matches, or the user is left typing into an invisible input.
 	if v.searching {
 		b.WriteString("  Search: ")
 		b.WriteString(v.searchInput.View())
@@ -219,6 +213,15 @@ func (v *DomainsView) View() string {
 	} else if v.searchInput.Value() != "" {
 		b.WriteString(styles.HelpStyle.Render(fmt.Sprintf("  Filter: \"%s\" (/ to edit, esc to clear)", v.searchInput.Value())))
 		b.WriteString("\n")
+	}
+
+	if len(v.filtered) == 0 {
+		if v.searchInput.Value() != "" {
+			b.WriteString("  No domains match your search.")
+		} else {
+			b.WriteString("  No domains found.")
+		}
+		return b.String()
 	}
 
 	// Column widths

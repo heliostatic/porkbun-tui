@@ -1,10 +1,12 @@
 package views
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/bc/porkbun-tui/internal/api"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestDomainsView_SetDomains(t *testing.T) {
@@ -143,6 +145,53 @@ func TestDomainsView_FilterNoMatch(t *testing.T) {
 
 	if len(v.filtered) != 0 {
 		t.Errorf("expected 0 filtered domains, got %d", len(v.filtered))
+	}
+}
+
+// searchFor drives the view through real key events: "/" to enter search
+// mode, then the query one rune at a time.
+func searchFor(v *DomainsView, query string) *DomainsView {
+	v, _ = v.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	for _, r := range query {
+		v, _ = v.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	return v
+}
+
+func TestDomainsView_ViewShowsSearchInputWhenNoMatches(t *testing.T) {
+	v := NewDomainsView()
+	v.SetDomains([]api.Domain{{Name: "example.com", ExpireDate: time.Now()}})
+
+	v = searchFor(v, "zzz")
+
+	out := v.View()
+	if !strings.Contains(out, "Search:") {
+		t.Error("View() hides the search input when the query has no matches")
+	}
+	if !strings.Contains(out, "zzz") {
+		t.Error("View() does not show what the user has typed")
+	}
+	if !strings.Contains(out, "No domains match") {
+		t.Error("View() missing the no-match message")
+	}
+}
+
+func TestDomainsView_ViewShowsFilterHintWhenNoMatches(t *testing.T) {
+	v := NewDomainsView()
+	v.SetDomains([]api.Domain{{Name: "example.com", ExpireDate: time.Now()}})
+
+	v = searchFor(v, "zzz")
+	v, _ = v.Update(tea.KeyMsg{Type: tea.KeyEsc}) // exit search mode; filter persists
+
+	if v.IsSearching() {
+		t.Fatal("still in search mode after esc")
+	}
+	out := v.View()
+	if !strings.Contains(out, `Filter: "zzz"`) {
+		t.Error("View() hides the active filter when it has no matches")
+	}
+	if !strings.Contains(out, "esc to clear") {
+		t.Error("View() does not tell the user how to clear the filter")
 	}
 }
 
